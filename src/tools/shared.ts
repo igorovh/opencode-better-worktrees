@@ -160,10 +160,15 @@ export async function resolveWorktree(deps: ToolDeps, reference: string): Promis
 
 export interface CreateWorktreeResult {
   readonly created: true
+  /** Absolute worktree path as reported by the native API. */
   readonly directory: string
   readonly name: string
+  /** Branch the agent should create inside the worktree before committing. */
   readonly branch?: string
+  /** Base ref the worktree was detached at, when explicitly requested. */
   readonly from?: string
+  /** The native API creates detached worktrees; create `branch` before committing. */
+  readonly detached: true
   readonly strategy: string
   readonly projectID: string
 }
@@ -176,6 +181,11 @@ export interface CreateWorktreeResult {
  * - calls the native `v2.worktree.create` (OpenCode runs any configured setup
  *   scripts itself; the plugin never reproduces that lifecycle);
  * - serializes concurrent creates per directory with a keyed mutex.
+ *
+ * Verified native contract (beta-18684): the request names a PARENT directory
+ * plus a leaf `name`, and `baseRef` is detached at an existing ref. The worktree
+ * lands in detached HEAD, so the result reports the branch the agent should
+ * create there before committing — the plugin itself never shells out to git.
  */
 export async function createWorktree(
   deps: ToolDeps,
@@ -214,18 +224,18 @@ export async function createWorktree(
     const created = await deps.worktrees.create({
       projectID: deps.project.id,
       strategy: deps.options.strategy,
-      directory,
-      branch,
-      from: input.from,
+      directory: root,
       name,
+      baseRef: input.from,
     })
 
     return {
       created: true as const,
-      directory: created.directory ?? directory,
-      name,
+      directory: created.directory,
+      name: basenameOf(created.directory),
       branch,
       from: input.from,
+      detached: true as const,
       strategy: deps.options.strategy,
       projectID: deps.project.id,
     }

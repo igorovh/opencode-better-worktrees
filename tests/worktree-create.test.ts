@@ -15,28 +15,31 @@ describe("worktree_create", () => {
     expect(out.created).toBe(true)
     expect(out.name).toBe("auth")
     expect(out.projectID).toBe(PROJECT.id)
-    expect(out.strategy).toBe("git_worktree")
+    expect(out.strategy).toBe("git")
+    expect(out.detached).toBe(true)
+    expect(out.branch).toBe("agent/auth") // suggested branch (default branchPrefix)
 
-    // Native create received the exact documented request shape.
+    // Native create received the exact verified beta request shape:
+    // `directory` is the parent, `name` the leaf, `baseRef` absent without `from`.
     expect(h.worktrees.createCalls).toHaveLength(1)
     const call = h.worktrees.createCalls[0]!
     expect(call.projectID).toBe(PROJECT.id)
-    expect(call.strategy).toBe("git_worktree")
+    expect(call.strategy).toBe("git")
     expect(call.name).toBe("auth")
-    expect(call.branch).toBe("agent/auth") // default branchPrefix
-    expect(call.from).toBeUndefined()
-    expect(call.directory).toBe(resolveInsideRoot(resolveDirectoryRoot(h.options, PROJECT.canonical), "auth"))
+    expect(call.directory).toBe(resolveDirectoryRoot(h.options, PROJECT.canonical))
+    expect(call.baseRef).toBeUndefined()
   })
 
-  test("uses the agent-provided branch and from ref verbatim", async () => {
+  test("forwards `from` as the detach ref and `branch` as the suggested branch name", async () => {
     const h = makeHarness()
     const tool = buildCreateTool(h.deps)
 
-    await output(tool, { name: "feat", branch: "feature/one", from: "main" })
+    const out = await output(tool, { name: "feat", branch: "feature/one", from: "main" })
 
     const call = h.worktrees.createCalls[0]!
-    expect(call.branch).toBe("feature/one")
-    expect(call.from).toBe("main")
+    expect(call.baseRef).toBe("main")
+    expect(out.branch).toBe("feature/one")
+    expect(out.from).toBe("main")
   })
 
   test("returns the absolute directory in text and structured output", async () => {
@@ -123,6 +126,6 @@ describe("worktree_create", () => {
     await output(buildCreateTool(h.deps), { name: "auth" })
     const listed = await output<{ worktrees: { name: string; kind: string; strategy?: string }[] }>(buildListTool(h.deps), {})
     expect(listed.worktrees).toHaveLength(1)
-    expect(listed.worktrees[0]).toMatchObject({ name: "auth", kind: "managed", strategy: "git_worktree" })
+    expect(listed.worktrees[0]).toMatchObject({ name: "auth", kind: "managed", strategy: "git" })
   })
 })

@@ -14,14 +14,26 @@ export interface ManagedWorktree {
   readonly strategy?: string
 }
 
-/** Input of the native `v2.worktree.create` call (`Worktree.CreateInput`). */
+/**
+ * Input of the native `v2.worktree.create` call, verified against the running
+ * `0.0.0-beta-18684` server:
+ * - `directory` is the PARENT directory and `name` the leaf under it (the
+ *   server joins them, suffixing the name on collisions);
+ * - `branch` is an EXISTING ref that the server attaches the worktree to in
+ *   detached mode (`--detach -- <dir> <ref>`); it does NOT create a branch;
+ * - `from` would override the source directory and is not used by this plugin.
+ * The created worktree is always in detached HEAD; the agent creates a branch
+ * inside it before committing (see the tool output and injected instructions).
+ */
 export interface WorktreeCreateRequest {
   readonly projectID: string
   readonly strategy: string
+  /** Parent directory under which the worktree directory is created. */
   readonly directory: string
-  readonly from?: string
-  readonly branch?: string
+  /** Leaf directory name of the worktree. */
   readonly name?: string
+  /** Existing ref to detach the worktree at (defaults to the server's HEAD). */
+  readonly baseRef?: string
 }
 
 /**

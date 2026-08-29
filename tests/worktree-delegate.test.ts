@@ -23,13 +23,12 @@ describe("worktree_delegate", () => {
     expect(out.branch).toBe("agent/payments")
     expect(out.sessionID).toBeTruthy()
 
-    // Exactly one native create with the documented payload.
+    // Exactly one native create with the verified beta payload.
     expect(h.worktrees.createCalls).toHaveLength(1)
     expect(h.worktrees.createCalls[0]).toMatchObject({
       projectID: PROJECT.id,
-      strategy: "git_worktree",
+      strategy: "git",
       name: "payments",
-      branch: "agent/payments",
     })
 
     // The spawned session's real location is the new worktree.

@@ -64,7 +64,7 @@ describe("worktree_status", () => {
     expect(out).toMatchObject({
       directory: created.directory,
       name: "backend",
-      strategy: "git_worktree",
+      strategy: "git",
       branch: "agent/backend",
       defaultBranch: "main",
       changes: 2,

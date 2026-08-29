@@ -88,7 +88,8 @@ export function buildDelegateTool(deps: ToolDeps): WorktreeTool {
       const human =
         `Delegated task to a new session (${result.sessionID}) in managed worktree "${created.name}" at ` +
         `${created.directory}` +
-        (result.waited ? ". The session finished its task." : ". It is now working independently.")
+        (created.branch ? `. The worktree is detached; the session should run \`git switch -c ${created.branch}\` before committing.` : "") +
+        (result.waited ? " The session finished its task." : " It is now working independently.")
       return { output, content: withJson(human, output), metadata: { sessionID: result.sessionID, worktree: created.directory } }
     },
   })

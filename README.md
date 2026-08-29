@@ -30,7 +30,8 @@ v2.worktree.refresh  POST   /api/worktree/{projectID}/refresh
 ```
 
 OpenCode remains the **source of truth** for managed worktrees: setup scripts, strategy handling
-(`git_worktree`), directory bookkeeping, and safety checks stay inside OpenCode. This plugin is a
+(`git` / `git_worktree` — the id was renamed across betas, the gateway negotiates automatically),
+directory bookkeeping, and safety checks stay inside OpenCode. This plugin is a
 thin orchestration layer — it **never** runs `git worktree add/remove/prune`, `git reset --hard`,
 `git clean`, or `git branch -D` (a test enforces this).
 
@@ -71,7 +72,7 @@ reference it from your `opencode.json(c)`:
       "options": {
         "directoryRoot": "../.opencode-worktrees", // where managed worktrees live
         "branchPrefix": "agent/",                  // default branch prefix
-        "strategy": "git_worktree",                // native strategy id (the only registered one today)
+        "strategy": "git",                         // native strategy id (auto-negotiated if the build differs)
         "serverUrl": "",                           // optional explicit OpenCode server URL
         "instructions": true                       // inject the worktree usage policy into agent context
       }
@@ -87,7 +88,7 @@ See `example/opencode.jsonc` for a ready-made example. Install dependencies once
 
 | Tool | Purpose |
 |---|---|
-| `worktree_create` | Create an isolated OpenCode-managed worktree. Inputs: `name` (required), `branch?`, `from?`. |
+| `worktree_create` | Create an isolated OpenCode-managed worktree. Inputs: `name` (required), `branch?` (suggested work branch), `from?` (existing ref to detach at). The native API creates worktrees in detached HEAD; the output reports the branch to create with `git switch -c` before committing. |
 | `worktree_list` | List all managed worktrees of the current project (root + copies). `includeStatus?` adds branch/change info. |
 | `worktree_status` | Inspect one worktree: branch, default branch, changed files, +add/−del, clean/dirty, optional diffs. |
 | `worktree_use` | Move the **current session** into a worktree via `v2.session.move`. |
@@ -147,8 +148,8 @@ Remove the authentication worktree if it is safe to do so.
 | Option | Default | Meaning |
 |---|---|---|
 | `directoryRoot` | `"../.opencode-worktrees"` | Where managed worktree directories are created. Relative paths resolve against the project's canonical directory; absolute paths are used as-is. |
-| `branchPrefix` | `"agent/"` | Prefix for the branch created when the agent does not pass an explicit `branch`. |
-| `strategy` | `"git_worktree"` | Native `Worktree.StrategyID` forwarded to `v2.worktree.create`. OpenCode currently registers exactly this one strategy. |
+| `branchPrefix` | `"agent/"` | Prefix for the suggested work branch reported by `worktree_create` (the native API creates detached worktrees; run `git switch -c <branch>` inside before committing). |
+| `strategy` | `"git"` | Native `Worktree.StrategyID` forwarded to `v2.worktree.create`. If the connected build registers a different id (e.g. `git_worktree`), the gateway retries the known alias automatically and caches the winner. |
 | `serverUrl` | *(auto-discovered)* | Explicit OpenCode server URL. When empty, the shared local service is discovered via `Service.discover()`. Useful with `--standalone` or remote servers. |
 | `instructions` | `true` | Inject a concise worktree usage policy into agent system context via the `session.context` hook. |
 
@@ -157,7 +158,9 @@ Remove the authentication worktree if it is safe to do so.
 - **No `ctx.worktree` in the plugin context** — worktree routes are reached through the official
   generated client bridge (see above). If a future beta exposes a worktree domain on the plugin
   context, `src/opencode/gateway.ts` is the single file to swap.
-- Only one native strategy (`git_worktree`) exists; `strategy` is still configurable.
+- Only one native strategy exists; its id was renamed across betas (`git` today, `git_worktree`
+  in other builds). The gateway tries the configured value first, then the known alias, and caches
+  whichever the connected server accepts.
 - Commit/merge/push of worktree changes is out of scope: OpenCode's native worktree API covers
   lifecycle (create/list/remove/refresh), not Git history manipulation. Use the session's normal
   git tooling for that; keep it isolated from this plugin's lifecycle layer.

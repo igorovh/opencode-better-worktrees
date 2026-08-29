@@ -12,7 +12,7 @@
         // "agent/<name>".
         "branchPrefix": "agent/",
         // Native OpenCode worktree strategy id (the only registered one today).
-        "strategy": "git_worktree",
+        "strategy": "git",
         // Leave empty to auto-discover the shared local OpenCode service.
         // Set explicitly for --standalone or remote servers, e.g.
         // "serverUrl": "http://127.0.0.1:4096"

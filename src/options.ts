@@ -3,9 +3,9 @@
  *
  * Conventions follow OpenCode wherever possible:
  * - `strategy` is the native `Worktree.StrategyID` string forwarded verbatim to
- *   `v2.worktree.create`. OpenCode currently registers exactly one strategy,
- *   "git_worktree"; the value stays configurable so future native strategies
- *   can be adopted without a plugin release.
+ *   `v2.worktree.create`. The id OpenCode registers has been renamed across
+ *   betas (`git` today, `git_worktree` in some builds); the gateway negotiates
+ *   automatically, so the value stays configurable without pinning a build.
  * - `directoryRoot` decides where managed worktree directories live. The
  *   native create API requires the caller to supply an absolute directory.
  */
@@ -28,7 +28,7 @@ export interface Options {
 
 export const DEFAULT_DIRECTORY_ROOT = "../.opencode-worktrees"
 export const DEFAULT_BRANCH_PREFIX = "agent/"
-export const DEFAULT_STRATEGY = "git_worktree"
+export const DEFAULT_STRATEGY = "git"
 
 function readString(raw: Record<string, unknown>, key: string, fallback: string, what: string): string {
   const value = raw[key]

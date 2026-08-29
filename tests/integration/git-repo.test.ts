@@ -70,11 +70,15 @@ function makeGitVcs() {
   }
 }
 
-/** Stand-in for OpenCode's native worktree routes, backed by real git. */
-function makeNativeServer(repo: string, worktreeRoot: string) {
+/** Stand-in for OpenCode's native worktree routes, backed by real git.
+ * `acceptedStrategy` mirrors the build-specific strategy registry: requests
+ * with any other id get the exact native "Worktree strategy unavailable" error
+ * (beta-18684 registers "git"; other builds registered "git_worktree"). */
+function makeNativeServer(repo: string, worktreeRoot: string, acceptedStrategy: string) {
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } })
   const error = (message: string, forceRequired?: boolean) =>
     json({ name: "WorktreeError", data: { message, forceRequired: forceRequired ?? null } }, 400)
+  const createAttempts: string[] = []
 
   async function managedEntries(): Promise<{ directory: string; strategy?: string }[]> {
     const porcelain = await git(repo, "worktree", "list", "--porcelain")
@@ -84,7 +88,7 @@ function makeNativeServer(repo: string, worktreeRoot: string) {
       const line = block.split("\n").find((l) => l.startsWith("worktree "))
       if (!line) continue
       const directory = resolve(line.slice("worktree ".length).trim())
-      entries.push(first ? { directory } : { directory, strategy: "git_worktree" })
+      entries.push(first ? { directory } : { directory, strategy: acceptedStrategy })
       first = false
     }
     return entries
@@ -99,13 +103,17 @@ function makeNativeServer(repo: string, worktreeRoot: string) {
       if (request.method === "GET" && route === "") return json(await managedEntries())
 
       if (request.method === "POST" && route === "") {
-        const body = (await request.json()) as { strategy?: string; directory?: string; branch?: string; from?: string }
-        if (body.strategy !== "git_worktree" || !body.directory) return error("unsupported strategy or missing directory")
-        const args = ["worktree", "add", "-b", body.branch ?? "agent/wt", body.directory]
-        if (body.from) args.push(body.from)
+        const body = (await request.json()) as { strategy?: string; directory?: string; name?: string; branch?: string }
+        createAttempts.push(body.strategy ?? "")
+        if (body.strategy !== acceptedStrategy) return error(`Worktree strategy unavailable: ${body.strategy}`)
+        if (!body.directory || !body.name) return error("directory and name are required")
+        // Verified beta semantics: parent dir + leaf name, detached at an
+        // existing ref (`branch`) or HEAD.
+        const target = resolve(join(body.directory, body.name))
+        const ref = body.branch ?? "HEAD"
         try {
-          await git(repo, ...args)
-          return json({ directory: resolve(body.directory) })
+          await git(repo, "worktree", "add", "--detach", "--", target, ref)
+          return json({ directory: target })
         } catch (e) {
           return error(e instanceof Error ? e.message : String(e))
         }
@@ -132,7 +140,7 @@ function makeNativeServer(repo: string, worktreeRoot: string) {
     },
   })
   void worktreeRoot
-  return server
+  return { server, createAttempts }
 }
 
 describe.skipIf(!gitAvailable)("integration: temp git repository through the native worktree bridge", () => {
@@ -158,7 +166,7 @@ describe.skipIf(!gitAvailable)("integration: temp git repository through the nat
     locks: new KeyedMutex(),
   }
 
-  const server = makeNativeServer(repo, worktreeRoot)
+  const { server, createAttempts } = makeNativeServer(repo, worktreeRoot, "git")
   // Real generated OpenCode client talking over HTTP to the stand-in server.
   ;(deps as { worktrees: unknown }).worktrees = new WorktreeGateway({ serverUrl: `http://localhost:${server.port}` })
 
@@ -172,14 +180,17 @@ describe.skipIf(!gitAvailable)("integration: temp git repository through the nat
     await git(repo, "add", ".")
     await git(repo, "commit", "-m", "initial")
 
-    // 1) Create through the plugin tool → real git worktree on disk.
+    // 1) Create through the plugin tool → real git worktree on disk (detached).
     const created = await output<{ directory: string; branch?: string }>(buildCreateTool(deps), { name: "it-auth" })
-    expect(created.branch).toBe("agent/it-auth")
+    expect(created.branch).toBe("agent/it-auth") // suggested work branch
     expect(existsSync(created.directory)).toBe(true)
     expect(existsSync(join(created.directory, "README.md"))).toBe(true) // setup/checkout ran
+
+    // The agent (never the plugin) creates the work branch before committing.
+    await git(created.directory, "switch", "-c", "agent/it-auth")
     expect(await git(created.directory, "branch", "--show-current")).toContain("agent/it-auth")
 
-    // 2) Native list shows root + managed entry with the git_worktree strategy.
+    // 2) Native list shows root + managed entry with the accepted strategy.
     const listed = await output<{ worktrees: { kind: string; name: string }[] }>(buildListTool(deps), {})
     expect(listed.worktrees).toHaveLength(2)
     expect(listed.worktrees[0]).toMatchObject({ kind: "root" })
@@ -206,6 +217,55 @@ describe.skipIf(!gitAvailable)("integration: temp git repository through the nat
     // 6) Back to exactly the root worktree.
     const finalList = await output<{ worktrees: unknown[] }>(buildListTool(deps), {})
     expect(finalList.worktrees).toHaveLength(1)
+  })
+
+  test("cleanup", () => {
+    server.stop(true)
+    rmSync(base, { recursive: true, force: true })
+  })
+})
+
+describe.skipIf(!gitAvailable)("integration: strategy alias negotiation against a legacy build", () => {
+  /** A build that registered the strategy under the older `git_worktree` id:
+   * the plugin's default `git` attempt must fail with the exact native error
+   * and the gateway must retry the alias — over real HTTP. */
+  const base = mkdtempSync(join(tmpdir(), "opencode2-worktrees-it-legacy-"))
+  const repo = join(base, "repo")
+  const worktreeRoot = join(base, "worktrees")
+
+  const { server, createAttempts } = makeNativeServer(repo, worktreeRoot, "git_worktree")
+  const deps: ToolDeps = {
+    project: { id: PROJECT.id, directory: repo, canonical: repo },
+    worktrees: new WorktreeGateway({ serverUrl: `http://localhost:${server.port}` }),
+    sessions: {
+      get: async () => ({ id: "ses_main", projectID: PROJECT.id, directory: repo }),
+      createAtLocation: async () => ({ id: "ses_spawned", projectID: PROJECT.id, directory: repo }),
+      move: async () => {},
+      prompt: async () => ({}),
+      wait: async () => {},
+    },
+    vcs: makeGitVcs(),
+    fs: { exists: fsExists },
+    agents: { get: async (agentID) => ({ id: agentID }) },
+    options: resolveOptions({ directoryRoot: worktreeRoot }),
+    locks: new KeyedMutex(),
+  }
+
+  test("create falls back from `git` to `git_worktree` and succeeds", async () => {
+    mkdirSync(repo, { recursive: true })
+    await git(repo, "init", "-b", "main")
+    await git(repo, "config", "user.email", "test@example.com")
+    await git(repo, "config", "user.name", "Test")
+    await git(repo, "commit", "--allow-empty", "-m", "initial")
+
+    const created = await output<{ directory: string }>(buildCreateTool(deps), { name: "legacy" })
+    expect(existsSync(created.directory)).toBe(true)
+
+    // First attempt used the configured default, the retry used the alias.
+    expect(createAttempts).toEqual(["git", "git_worktree"])
+
+    const removed = await output<{ removed: boolean }>(buildRemoveTool(deps), { worktree: "legacy", force: true })
+    expect(removed.removed).toBe(true)
   })
 
   test("cleanup", () => {

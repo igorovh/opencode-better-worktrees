@@ -39,8 +39,10 @@ export class FakeWorktrees implements WorktreeTransport {
     if (input.projectID !== PROJECT.id) throw new Error(`unknown project ${input.projectID}`)
     this.createCalls.push(input)
     if (this.createError) throw this.createError
-    this.entries = [...this.entries, { directory: input.directory, strategy: input.strategy }]
-    return { directory: input.directory }
+    // Mimics the verified native contract: the worktree lives at <parent>/<leaf>.
+    const directory = input.name ? `${input.directory}/${input.name}`.replace(/\/+/g, "/") : input.directory
+    this.entries = [...this.entries, { directory, strategy: input.strategy }]
+    return { directory }
   }
 
   async remove(input: { projectID: string; directory: string; force: boolean }): Promise<void> {

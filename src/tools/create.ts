@@ -28,11 +28,13 @@ export function buildCreateTool(deps: ToolDeps): WorktreeTool {
         branch: {
           type: "string",
           description:
-            'Optional Git branch name for the new worktree. Defaults to the configured prefix plus the name (e.g. "agent/auth-refactor").',
+            'Optional branch name to create inside the worktree before committing. Defaults to the configured prefix ' +
+            'plus the name (e.g. "agent/auth-refactor"). The native API creates worktrees in detached HEAD, so run ' +
+            '`git switch -c <branch>` inside the worktree before the first commit.',
         },
         from: {
           type: "string",
-          description: 'Optional Git ref to base the new worktree on (e.g. "main" or a commit hash). Defaults to the repository default.',
+          description: 'Optional existing Git ref to detach the worktree at (e.g. "main" or a commit hash). Defaults to HEAD.',
         },
       },
       required: ["name"],
@@ -45,12 +47,14 @@ export function buildCreateTool(deps: ToolDeps): WorktreeTool {
         throw new InvalidInputError('The "name" input is required.')
       }
       const result = await createWorktree(deps, { name: input.name, branch: input.branch, from: input.from })
+      const switchNote = result.branch
+        ? ` The native API creates detached worktrees — run \`git switch -c ${result.branch}\` inside before committing.`
+        : ""
       return {
         output: { ...result },
         content: withJson(
-          `Created managed worktree "${result.name}" at ${result.directory}` +
-            (result.branch ? ` on branch "${result.branch}"` : "") +
-            ". Use worktree_use to move this session there, or worktree_spawn_agent to delegate work to it.",
+          `Created managed worktree "${result.name}" at ${result.directory}.${switchNote}` +
+            " Use worktree_use to move this session there, or worktree_spawn_agent to delegate work to it.",
           { ...result },
         ),
         metadata: { worktree: result.directory },
