@@ -23,10 +23,10 @@ Agent:   → worktree_delegate    (frontend worktree + its own agent session)
 OpenCode 2 owns a managed worktree registry per project:
 
 ```text
-v2.worktree.list     GET    /api/worktree/{projectID}
-v2.worktree.create   POST   /api/worktree/{projectID}
-v2.worktree.remove   DELETE /api/worktree/{projectID}
-v2.worktree.refresh  POST   /api/worktree/{projectID}/refresh
+v2.worktree.list     GET    /api/worktree
+v2.worktree.create   POST   /api/worktree
+v2.worktree.remove   DELETE /api/worktree
+v2.worktree.refresh  POST   /api/worktree/refresh
 ```
 
 OpenCode remains the **source of truth** for managed worktrees: setup scripts, strategy handling
@@ -35,20 +35,25 @@ directory bookkeeping, and safety checks stay inside OpenCode. This plugin is a
 thin orchestration layer — it **never** runs `git worktree add/remove/prune`, `git reset --hard`,
 `git clean`, or `git branch -D` (a test enforces this).
 
-**Beta API note (exact limitation).** The V2 plugin context does **not** expose a `worktree` domain
-(there is no `ctx.worktree`), while the official generated client does. This plugin therefore uses
-the smallest supported bridge: it reaches those routes through the official generated V2 client
-(`@opencode-ai/client`), connected to your running OpenCode service via the official
-`Service.discover()` API (read-only discovery — it never starts or stops processes). Everything else
-(sessions, VCS, tools, agents) goes through the plugin context directly. Because the plugin API is
-beta, this plugin is version-pinned to the `beta` channel and may need updates when OpenCode ships
-contract changes.
+Operations are scoped by `location` (`location[directory]` in HTTP query parameters), not a
+`projectID` path segment. The gateway binds them to the plugin's location and checks the internal
+project identity before dispatching.
+
+The plugin uses **`ctx.worktree` by default**, so worktree operations run on the same server as the
+session, including standalone servers. An explicit `serverUrl` uses the official generated
+`@opencode-ai/client` instead. Standalone gateway callers without a native domain can still use
+read-only `Service.discover()`; the plugin never starts or stops a service.
+
+**Beta compatibility:** dependencies are pinned to `0.0.0-beta-19157`, matching the tested server
+contract. Older clients using `/api/worktree/{projectID}` receive HTTP 404 on location-scoped
+servers. Updating dependencies alone is insufficient: callers must pass `location` instead of
+`projectID`. Recheck the API and tests when upgrading OpenCode.
 
 ## Installation
 
-Requires a matching OpenCode 2 `beta` CLI (`opencode2 v0.0.0-beta-*`) and Bun.
+Tested with OpenCode 2 `opencode2 v0.0.0-beta-19157` and Bun.
 
-**Local plugin file** — copy this project somewhere (e.g. `<project>/plugins/agent-worktrees`) and
+**Local plugin directory** — copy this project somewhere (e.g. `<project>/plugins/agent-worktrees`) and
 reference it from your `opencode.json(c)`:
 
 ```jsonc
@@ -56,7 +61,7 @@ reference it from your `opencode.json(c)`:
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
-    "./plugins/agent-worktrees/src/index.ts"
+    "./plugins/agent-worktrees"
   ]
 }
 ```
@@ -68,12 +73,11 @@ reference it from your `opencode.json(c)`:
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "./plugins/agent-worktrees/src/index.ts",
+      "package": "./plugins/agent-worktrees",
       "options": {
         "directoryRoot": "../.opencode-worktrees", // where managed worktrees live
         "branchPrefix": "agent/",                  // default branch prefix
         "strategy": "git",                         // native strategy id (auto-negotiated if the build differs)
-        "serverUrl": "",                           // optional explicit OpenCode server URL
         "instructions": true                       // inject the worktree usage policy into agent context
       }
     }
@@ -150,14 +154,14 @@ Remove the authentication worktree if it is safe to do so.
 | `directoryRoot` | `"../.opencode-worktrees"` | Where managed worktree directories are created. Relative paths resolve against the project's canonical directory; absolute paths are used as-is. |
 | `branchPrefix` | `"agent/"` | Prefix for the suggested work branch reported by `worktree_create` (the native API creates detached worktrees; run `git switch -c <branch>` inside before committing). |
 | `strategy` | `"git"` | Native `Worktree.StrategyID` forwarded to `v2.worktree.create`. If the connected build registers a different id (e.g. `git_worktree`), the gateway retries the known alias automatically and caches the winner. |
-| `serverUrl` | *(auto-discovered)* | Explicit OpenCode server URL. When empty, the shared local service is discovered via `Service.discover()`. Useful with `--standalone` or remote servers. |
+| `serverUrl` | *(native plugin context)* | Optional explicit OpenCode server URL. Omit to use `ctx.worktree` on the session's server, including `--standalone`. |
 | `instructions` | `true` | Inject a concise worktree usage policy into agent system context via the `session.context` hook. |
 
 ## Limitations (current OpenCode 2 beta)
 
-- **No `ctx.worktree` in the plugin context** — worktree routes are reached through the official
-  generated client bridge (see above). If a future beta exposes a worktree domain on the plugin
-  context, `src/opencode/gateway.ts` is the single file to swap.
+- Worktree API changes between beta releases require compatible dependencies and gateway inputs.
+  The default native domain avoids a separate HTTP connection; explicit-server calls still need
+  a compatible generated client.
 - Only one native strategy exists; its id was renamed across betas (`git` today, `git_worktree`
   in other builds). The gateway tries the configured value first, then the known alias, and caches
   whichever the connected server accepts.
@@ -172,7 +176,7 @@ Remove the authentication worktree if it is safe to do so.
 
 ```sh
 bun install        # dependencies
-bun test           # unit + integration tests (66 tests; integration uses a real temp git repo)
+bun test           # unit + HTTP contract + real-git integration tests
 bun run typecheck  # tsc --noEmit
 ```
 
@@ -184,7 +188,7 @@ src/
   options.ts          # option parsing + directory/branch resolution
   instructions.ts     # agent usage policy injected into context
   opencode/           # OpenCode API layer (single place to adapt to beta changes)
-    gateway.ts        #   native worktree routes via the generated client
+    gateway.ts        #   native worktree domain + optional generated HTTP client
     sessions.ts       #   ctx.session wrapper (create at location, move, prompt, wait)
     vcs.ts            #   location-scoped ctx.vcs wrapper
     types.ts          #   transport interfaces (injected → fakes in tests)
@@ -194,6 +198,7 @@ tests/                # bun test suite (unit fakes + real-git integration + hygi
 example/opencode.jsonc
 ```
 
-To develop against your live OpenCode: point `plugins` at this project's `src/index.ts`, restart
-OpenCode, and try the example prompts. Check `~/.local/share/opencode/log/opencode.log`
+To develop against your live OpenCode: point `plugins` at this project's directory, restart
+the service with `opencode2 service restart`, and try the example prompts. Restart after changing
+unwatched local plugin dependencies. Check `~/.local/share/opencode/log/opencode.log`
 (`role=server`) if tools do not appear.

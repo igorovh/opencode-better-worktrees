@@ -20,7 +20,7 @@ export interface Options {
   readonly branchPrefix: string
   /** Native worktree strategy id forwarded to `v2.worktree.create`. */
   readonly strategy: string
-  /** Explicit OpenCode server URL. When empty, the shared local service is discovered automatically. */
+  /** Explicit OpenCode server URL. When omitted, use the plugin's native worktree domain. */
   readonly serverUrl?: string
   /** Whether to inject the concise worktree usage policy into agent context. */
   readonly instructions: boolean

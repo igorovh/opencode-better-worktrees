@@ -3,7 +3,7 @@
   // Example: load the agent-worktrees plugin from a sibling folder with options.
   "plugins": [
     {
-      "package": "../opencode2-worktrees/src/index.ts",
+      "package": "../opencode2-worktrees",
       "options": {
         // Where managed worktree directories are created. Relative to the
         // project's canonical directory; use an absolute path if preferred.
@@ -13,10 +13,9 @@
         "branchPrefix": "agent/",
         // Native OpenCode worktree strategy id (the only registered one today).
         "strategy": "git",
-        // Leave empty to auto-discover the shared local OpenCode service.
-        // Set explicitly for --standalone or remote servers, e.g.
+        // Omit to use the native domain on the session's server.
+        // Set explicitly only when a different HTTP server is intended, e.g.
         // "serverUrl": "http://127.0.0.1:4096"
-        "serverUrl": "",
         // Inject the concise worktree usage policy into agent context.
         "instructions": true
       }

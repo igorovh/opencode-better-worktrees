@@ -1,21 +1,16 @@
 /**
  * Bridge to OpenCode's native Worktree API (`v2.worktree.*`).
  *
- * Why a bridge at all: the V2 plugin context does not expose a `worktree`
- * domain (verified against `@opencode-ai/plugin@beta` type definitions), while
- * the official generated client (`@opencode-ai/client`) does. This module is
- * the single place that knows how to reach those routes:
- *
- *   1. an explicit `serverUrl` plugin option wins;
- *   2. otherwise the shared local OpenCode service is discovered through the
- *      official `Service.discover()` API (read-only: it never starts or stops
- *      any process).
+ * Uses the plugin's native worktree domain unless an explicit serverUrl is
+ * configured. Standalone callers can discover the shared service read-only.
+ * Operations are scoped by projectID; location resolves the target install.
  *
  * All worktree lifecycle management goes through the native API. This module
  * never shells out to `git worktree`.
  */
 
 import { isWorktreeError, OpenCode } from "@opencode-ai/client"
+import type { WorktreeApi } from "@opencode-ai/client/promise/api"
 import { Service } from "@opencode-ai/client/service"
 import { WorktreeFailure } from "../utils/errors.ts"
 import type { ManagedWorktree, WorktreeCreateRequest, WorktreeTransport } from "./types.ts"
@@ -61,6 +56,14 @@ const STRATEGY_ALIASES = ["git", "git_worktree"] as const
 
 const STRATEGY_UNAVAILABLE = /strategy unavailable/i
 
+/**
+ * Current server builds require `projectID` in in-process worktree inputs;
+ * the pinned beta-19157 client types predate it, hence the cast.
+ */
+function nativeInput<T extends object>(projectID: string, input: T): T {
+  return { projectID, ...input } as T
+}
+
 /** Candidate strategy ids to attempt, de-duplicated, cached winner first. */
 export function strategyCandidates(preferred: string, resolved?: string): string[] {
   return [...new Set([resolved, preferred, ...STRATEGY_ALIASES].filter((id): id is string => typeof id === "string"))]
@@ -95,7 +98,19 @@ export class WorktreeGateway implements WorktreeTransport {
   /** Strategy id the connected server last accepted for create, if known. */
   private resolvedStrategy?: string
 
-  constructor(private readonly options: { serverUrl?: string }) {}
+  constructor(private readonly options: {
+    project: { id: string; directory: string }
+    worktree?: WorktreeApi
+    serverUrl?: string
+  }) {}
+
+  private async api(projectID: string): Promise<WorktreeApi> {
+    if (projectID !== this.options.project.id) {
+      throw new WorktreeFailure({ message: `Worktree access requested for an unknown project: ${projectID}.` })
+    }
+    if (!this.options.serverUrl && this.options.worktree) return this.options.worktree
+    return (await this.client()).worktree
+  }
 
   /** Lazily create (once) the generated OpenCode client used for all native calls. */
   private client(): Promise<ReturnType<typeof OpenCode.make>> {
@@ -122,8 +137,10 @@ export class WorktreeGateway implements WorktreeTransport {
 
   async list(input: { projectID: string }): Promise<readonly ManagedWorktree[]> {
     try {
-      const client = await this.client()
-      const directories = await client.worktree.list({ projectID: input.projectID })
+      const worktree = await this.api(input.projectID)
+      const directories = await worktree.list(
+        nativeInput(input.projectID, { location: { directory: this.options.project.directory } }),
+      )
       return (directories ?? []).map((entry) => ({ directory: entry.directory, strategy: entry.strategy }))
     } catch (error) {
       throw normalizeTransportError(error)
@@ -132,20 +149,24 @@ export class WorktreeGateway implements WorktreeTransport {
 
   async create(input: WorktreeCreateRequest): Promise<{ directory: string }> {
     try {
-      const client = await this.client()
+      const worktree = await this.api(input.projectID)
       // Verified native contract: `directory` = parent dir, `name` = leaf,
       // `branch` = existing ref for the detached checkout; the response's
       // `directory` is the actual worktree path.
       const result = await createWithStrategyFallback(
         (strategy) =>
-          client.worktree
-            .create({
-              projectID: input.projectID,
-              strategy,
-              directory: input.directory,
-              name: input.name,
-              branch: input.baseRef,
-            })
+          worktree
+            .create(
+              nativeInput(input.projectID, {
+                location: { directory: this.options.project.directory },
+                strategy,
+                directory: input.directory,
+                name: input.name,
+                // The in-process worktree domain requires a string; the HTTP
+                // layer defaults an omitted branch to the server's HEAD.
+                branch: input.baseRef ?? "HEAD",
+              }),
+            )
             .catch((error: unknown) => {
               throw normalizeTransportError(error)
             }),
@@ -161,8 +182,14 @@ export class WorktreeGateway implements WorktreeTransport {
 
   async remove(input: { projectID: string; directory: string; force: boolean }): Promise<void> {
     try {
-      const client = await this.client()
-      await client.worktree.remove({ projectID: input.projectID, directory: input.directory, force: input.force })
+      const worktree = await this.api(input.projectID)
+      await worktree.remove(
+        nativeInput(input.projectID, {
+          location: { directory: this.options.project.directory },
+          directory: input.directory,
+          force: input.force,
+        }),
+      )
     } catch (error) {
       throw normalizeTransportError(error)
     }
@@ -170,8 +197,8 @@ export class WorktreeGateway implements WorktreeTransport {
 
   async refresh(input: { projectID: string }): Promise<void> {
     try {
-      const client = await this.client()
-      await client.worktree.refresh({ projectID: input.projectID })
+      const worktree = await this.api(input.projectID)
+      await worktree.refresh(nativeInput(input.projectID, { location: { directory: this.options.project.directory } }))
     } catch (error) {
       throw normalizeTransportError(error)
     }

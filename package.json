@@ -12,8 +12,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/client": "beta",
-    "@opencode-ai/plugin": "beta"
+    "@opencode-ai/client": "0.0.0-beta-19157",
+    "@opencode-ai/plugin": "0.0.0-beta-19157"
   },
   "devDependencies": {
     "@types/bun": "latest",

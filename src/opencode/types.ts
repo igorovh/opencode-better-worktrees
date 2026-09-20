@@ -16,7 +16,7 @@ export interface ManagedWorktree {
 
 /**
  * Input of the native `v2.worktree.create` call, verified against the running
- * `0.0.0-beta-18684` server:
+ * `0.0.0-beta-19157` server:
  * - `directory` is the PARENT directory and `name` the leaf under it (the
  *   server joins them, suffixing the name on collisions);
  * - `branch` is an EXISTING ref that the server attaches the worktree to in
@@ -26,6 +26,7 @@ export interface ManagedWorktree {
  * inside it before committing (see the tool output and injected instructions).
  */
 export interface WorktreeCreateRequest {
+  /** Internal ownership guard; the native API derives the project from location. */
   readonly projectID: string
   readonly strategy: string
   /** Parent directory under which the worktree directory is created. */

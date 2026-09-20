@@ -98,11 +98,12 @@ function makeNativeServer(repo: string, worktreeRoot: string, acceptedStrategy: 
     port: 0,
     async fetch(request) {
       const url = new URL(request.url)
-      const route = url.pathname.replace(/^\/api\/worktree\/[^/]+/, "")
+      if (url.searchParams.get("location[directory]") !== repo) return error("wrong worktree location")
+      const route = url.pathname
 
-      if (request.method === "GET" && route === "") return json(await managedEntries())
+      if (request.method === "GET" && route === "/api/worktree") return json(await managedEntries())
 
-      if (request.method === "POST" && route === "") {
+      if (request.method === "POST" && route === "/api/worktree") {
         const body = (await request.json()) as { strategy?: string; directory?: string; name?: string; branch?: string }
         createAttempts.push(body.strategy ?? "")
         if (body.strategy !== acceptedStrategy) return error(`Worktree strategy unavailable: ${body.strategy}`)
@@ -119,7 +120,7 @@ function makeNativeServer(repo: string, worktreeRoot: string, acceptedStrategy: 
         }
       }
 
-      if (request.method === "DELETE" && route === "") {
+      if (request.method === "DELETE" && route === "/api/worktree") {
         const body = (await request.json()) as { directory?: string; force?: boolean }
         if (!body.directory) return error("directory is required")
         const dirty = (await git(body.directory, "status", "--porcelain").catch(() => "M fake")).trim() !== ""
@@ -134,7 +135,7 @@ function makeNativeServer(repo: string, worktreeRoot: string, acceptedStrategy: 
         }
       }
 
-      if (request.method === "POST" && route === "/refresh") return new Response(null, { status: 204 })
+      if (request.method === "POST" && route === "/api/worktree/refresh") return new Response(null, { status: 204 })
 
       return json({ message: `no route: ${request.method} ${url.pathname}` }, 404)
     },
@@ -151,7 +152,7 @@ describe.skipIf(!gitAvailable)("integration: temp git repository through the nat
   const deps: ToolDeps = {
     project: { id: PROJECT.id, directory: repo, canonical: repo },
     // Replaced with the HTTP-backed gateway right after the server starts below.
-    worktrees: new WorktreeGateway({ serverUrl: "http://127.0.0.1:1" }),
+    worktrees: new WorktreeGateway({ project: { id: PROJECT.id, directory: repo }, serverUrl: "http://127.0.0.1:1" }),
     sessions: {
       get: async () => ({ id: "ses_main", projectID: PROJECT.id, directory: repo }),
       createAtLocation: async () => ({ id: "ses_spawned", projectID: PROJECT.id, directory: repo }),
@@ -168,7 +169,10 @@ describe.skipIf(!gitAvailable)("integration: temp git repository through the nat
 
   const { server, createAttempts } = makeNativeServer(repo, worktreeRoot, "git")
   // Real generated OpenCode client talking over HTTP to the stand-in server.
-  ;(deps as { worktrees: unknown }).worktrees = new WorktreeGateway({ serverUrl: `http://localhost:${server.port}` })
+  ;(deps as { worktrees: unknown }).worktrees = new WorktreeGateway({
+    project: { id: PROJECT.id, directory: repo },
+    serverUrl: `http://localhost:${server.port}`,
+  })
 
   test("create → list → status → refuse dirty removal → forced removal, against real git", async () => {
     // Arrange a real repository with an initial commit.
@@ -236,7 +240,7 @@ describe.skipIf(!gitAvailable)("integration: strategy alias negotiation against 
   const { server, createAttempts } = makeNativeServer(repo, worktreeRoot, "git_worktree")
   const deps: ToolDeps = {
     project: { id: PROJECT.id, directory: repo, canonical: repo },
-    worktrees: new WorktreeGateway({ serverUrl: `http://localhost:${server.port}` }),
+    worktrees: new WorktreeGateway({ project: { id: PROJECT.id, directory: repo }, serverUrl: `http://localhost:${server.port}` }),
     sessions: {
       get: async () => ({ id: "ses_main", projectID: PROJECT.id, directory: repo }),
       createAtLocation: async () => ({ id: "ses_spawned", projectID: PROJECT.id, directory: repo }),

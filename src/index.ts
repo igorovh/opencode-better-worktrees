@@ -30,11 +30,14 @@ export default Plugin.define({
       canonical: ctx.location.project.canonical,
     }
 
-    // OpenCode API layer: native worktree routes through the official
-    // generated client, sessions/VCS through the plugin context domains.
+    // Native plugin domains share this session's server and location.
     const deps = {
       project,
-      worktrees: new WorktreeGateway({ serverUrl: options.serverUrl }),
+      worktrees: new WorktreeGateway({
+        project: { id: project.id, directory: ctx.location.directory },
+        worktree: ctx.worktree,
+        serverUrl: options.serverUrl,
+      }),
       sessions: contextSessions(ctx.session),
       vcs: contextVcs(ctx.vcs),
       fs: { exists },

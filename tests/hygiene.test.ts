@@ -42,14 +42,13 @@ describe("plugin hygiene", () => {
     }
   })
 
-  test("does not reference non-existent ctx.worktree or server-internal modules", () => {
-    expect(allCode).not.toContain("ctx.worktree")
+  test("does not reference server-internal modules or manage the service lifecycle", () => {
     expect(allCode).not.toContain("@opencode-ai/core")
     expect(allCode).not.toContain("Service.ensure")
     expect(allCode).not.toContain("Service.stop")
   })
 
-  test("native worktree access is funneled through the generated client bridge only", () => {
+  test("HTTP client access is confined to the gateway", () => {
     // Only gateway.ts may import the generated client; other modules must use deps.
     for (const file of sources) {
       if (file.replaceAll("\\", "/").endsWith("opencode/gateway.ts")) continue
