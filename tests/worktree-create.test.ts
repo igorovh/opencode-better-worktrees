@@ -15,7 +15,6 @@ describe("worktree_create", () => {
     expect(out.created).toBe(true)
     expect(out.name).toBe("auth")
     expect(out.projectID).toBe(PROJECT.id)
-    expect(out.strategy).toBe("git")
     expect(out.detached).toBe(true)
     expect(out.branch).toBe("agent/auth") // suggested branch (default branchPrefix)
 
@@ -24,7 +23,6 @@ describe("worktree_create", () => {
     expect(h.worktrees.createCalls).toHaveLength(1)
     const call = h.worktrees.createCalls[0]!
     expect(call.projectID).toBe(PROJECT.id)
-    expect(call.strategy).toBe("git")
     expect(call.name).toBe("auth")
     expect(call.directory).toBe(resolveDirectoryRoot(h.options, PROJECT.canonical))
     expect(call.baseRef).toBeUndefined()

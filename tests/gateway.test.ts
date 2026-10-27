@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { WorktreeApi } from "@opencode-ai/client/promise/api"
+import type { WorktreeApi } from "@opencode/client/promise/api"
 import { WorktreeGateway, normalizeTransportError } from "../src/opencode/gateway.ts"
 import { WorktreeFailure, isWorktreeFailure } from "../src/utils/errors.ts"
 import { nativeWorktreeError, PROJECT } from "./helpers/fakes.ts"
@@ -10,6 +10,11 @@ describe("gateway error normalization", () => {
     expect(isWorktreeFailure(failure)).toBe(true)
     expect(failure.message).toBe("worktree is dirty")
     expect(failure.forceRequired).toBe(true)
+  })
+
+  test("in-process Worktree.OperationError keeps its message and forceRequired", () => {
+    const failure = normalizeTransportError({ _tag: "Worktree.OperationError", message: "worktree is dirty", forceRequired: true })
+    expect(failure).toMatchObject({ message: "worktree is dirty", forceRequired: true, nativeName: "WorktreeError" })
   })
 
   test("forceRequired=null native hint maps to undefined, not true", () => {
@@ -27,8 +32,9 @@ describe("gateway error normalization", () => {
   })
 })
 
+
 describe("WorktreeGateway", () => {
-  test("uses the native plugin domain at the bound location for every operation", async () => {
+  test("uses the native plugin domain scoped by projectID for every operation", async () => {
     const calls: { operation: string; input: unknown }[] = []
     const directory = "/worktrees/task"
     const worktree: WorktreeApi = {
@@ -44,30 +50,29 @@ describe("WorktreeGateway", () => {
       async refresh(input) { calls.push({ operation: "refresh", input }) },
     }
     const gateway = new WorktreeGateway({ project: PROJECT, worktree })
-    const location = { directory: PROJECT.directory }
 
     expect(await gateway.list({ projectID: PROJECT.id })).toEqual([
       { directory: PROJECT.directory }, { directory, strategy: "git" },
     ])
-    expect(await gateway.create({ projectID: PROJECT.id, strategy: "git", directory: "/worktrees", name: "task", baseRef: "origin/pr-209" })).toEqual({ directory })
+    expect(await gateway.create({ projectID: PROJECT.id, directory: "/worktrees", name: "task", baseRef: "origin/pr-209" })).toEqual({ directory })
     await gateway.remove({ projectID: PROJECT.id, directory, force: false })
     await gateway.refresh({ projectID: PROJECT.id })
 
     expect(calls).toEqual([
-      { operation: "list", input: { projectID: PROJECT.id, location } },
-      { operation: "create", input: { projectID: PROJECT.id, location, strategy: "git", directory: "/worktrees", name: "task", branch: "origin/pr-209" } },
-      { operation: "remove", input: { projectID: PROJECT.id, location, directory, force: false } },
-      { operation: "refresh", input: { projectID: PROJECT.id, location } },
+      { operation: "list", input: { projectID: PROJECT.id } },
+      { operation: "create", input: { projectID: PROJECT.id, directory: "/worktrees", name: "task", branch: "origin/pr-209" } },
+      { operation: "remove", input: { projectID: PROJECT.id, directory, force: false } },
+      { operation: "refresh", input: { projectID: PROJECT.id } },
     ])
   })
 
-  test("omitted baseRef defaults to HEAD because the native domain requires a string branch", async () => {
-    const calls: { operation: string; input: unknown }[] = []
+  test("omitted baseRef leaves branch out so the server defaults to HEAD", async () => {
+    const calls: unknown[] = []
     const directory = "/worktrees/task"
     const worktree: WorktreeApi = {
       async list() { return [] },
       async create(input) {
-        calls.push({ operation: "create", input })
+        calls.push(input)
         return { directory }
       },
       async remove() {},
@@ -75,22 +80,21 @@ describe("WorktreeGateway", () => {
     }
     const gateway = new WorktreeGateway({ project: PROJECT, worktree })
 
-    expect(await gateway.create({ projectID: PROJECT.id, strategy: "git", directory: "/worktrees", name: "task" })).toEqual({ directory })
-    expect(calls).toEqual([
-      { operation: "create", input: { projectID: PROJECT.id, location: { directory: PROJECT.directory }, strategy: "git", directory: "/worktrees", name: "task", branch: "HEAD" } },
-    ])
+    expect(await gateway.create({ projectID: PROJECT.id, directory: "/worktrees", name: "task" })).toEqual({ directory })
+    expect(calls).toEqual([{ projectID: PROJECT.id, directory: "/worktrees", name: "task" }])
+    expect(Object.keys(calls[0] as object)).not.toContain("branch")
   })
 
   test("rejects cross-project operations before discovering or contacting a server", async () => {
     const gateway = new WorktreeGateway({ project: PROJECT, serverUrl: "http://127.0.0.1:9" })
     const projectID = "prj_other"
     await expect(gateway.list({ projectID })).rejects.toThrow("unknown project")
-    await expect(gateway.create({ projectID, strategy: "git", directory: "/worktrees" })).rejects.toThrow("unknown project")
+    await expect(gateway.create({ projectID, directory: "/worktrees" })).rejects.toThrow("unknown project")
     await expect(gateway.remove({ projectID, directory: "/worktrees/task", force: false })).rejects.toThrow("unknown project")
     await expect(gateway.refresh({ projectID })).rejects.toThrow("unknown project")
   })
 
-  test("explicit server uses location-scoped HTTP routes and preserves the starting ref and force flag", async () => {
+  test("explicit server sends projectID on every HTTP route and preserves the starting ref and force flag", async () => {
     const project = { id: PROJECT.id, directory: "E:\\Projects\\repo with spaces" }
     const directory = "E:\\Worktrees\\task"
     const requests: { method: string; path: string; query: Record<string, string>; body?: unknown }[] = []
@@ -104,9 +108,6 @@ describe("WorktreeGateway", () => {
           query: Object.fromEntries(url.searchParams),
           body: request.body ? await request.json() : undefined,
         })
-        if (url.searchParams.get("location[directory]") !== project.directory) {
-          return Response.json({ message: "wrong location" }, { status: 400 })
-        }
         if (url.pathname === "/api/worktree") {
           if (request.method === "GET") return Response.json([{ directory: project.directory }])
           if (request.method === "POST") return Response.json({ directory })
@@ -125,18 +126,17 @@ describe("WorktreeGateway", () => {
 
     try {
       expect(await gateway.list({ projectID: project.id })).toEqual([{ directory: project.directory }])
-      expect(await gateway.create({ projectID: project.id, strategy: "git", directory: "E:\\Worktrees", name: "task", baseRef: "origin/pr-209" })).toEqual({ directory })
+      expect(await gateway.create({ projectID: project.id, directory: "E:\\Worktrees", name: "task", baseRef: "origin/pr-209" })).toEqual({ directory })
       await expect(gateway.remove({ projectID: project.id, directory, force: false })).rejects.toMatchObject({
         message: "worktree is dirty", forceRequired: true, nativeName: "WorktreeError",
       })
       await gateway.refresh({ projectID: project.id })
 
-      const query = { "location[directory]": project.directory }
       expect(requests).toEqual([
-        { method: "GET", path: "/api/worktree", query, body: undefined },
-        { method: "POST", path: "/api/worktree", query, body: { strategy: "git", directory: "E:\\Worktrees", name: "task", branch: "origin/pr-209" } },
-        { method: "DELETE", path: "/api/worktree", query, body: { directory, force: false } },
-        { method: "POST", path: "/api/worktree/refresh", query, body: undefined },
+        { method: "GET", path: "/api/worktree", query: { projectID: project.id }, body: undefined },
+        { method: "POST", path: "/api/worktree", query: {}, body: { projectID: project.id, directory: "E:\\Worktrees", name: "task", branch: "origin/pr-209" } },
+        { method: "DELETE", path: "/api/worktree", query: {}, body: { projectID: project.id, directory, force: false } },
+        { method: "POST", path: "/api/worktree/refresh", query: {}, body: { projectID: project.id } },
       ])
     } finally {
       await server.stop(true)

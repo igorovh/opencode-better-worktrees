@@ -29,29 +29,29 @@ v2.worktree.remove   DELETE /api/worktree
 v2.worktree.refresh  POST   /api/worktree/refresh
 ```
 
-OpenCode remains the **source of truth** for managed worktrees: setup scripts, strategy handling
-(`git` / `git_worktree` — the id was renamed across betas, the gateway negotiates automatically),
-directory bookkeeping, and safety checks stay inside OpenCode. This plugin is a
+OpenCode remains the **source of truth** for managed worktrees: setup scripts, strategy selection
+(from the project's configuration), directory bookkeeping, and safety checks stay inside OpenCode.
+This plugin is a
 thin orchestration layer — it **never** runs `git worktree add/remove/prune`, `git reset --hard`,
 `git clean`, or `git branch -D` (a test enforces this).
 
-Operations are scoped by `location` (`location[directory]` in HTTP query parameters), not a
-`projectID` path segment. The gateway binds them to the plugin's location and checks the internal
-project identity before dispatching.
+Operations are scoped by `projectID` (a query parameter for `list`, a body field otherwise). The
+gateway checks that the ID matches the plugin's project before dispatching.
 
 The plugin uses **`ctx.worktree` by default**, so worktree operations run on the same server as the
 session, including standalone servers. An explicit `serverUrl` uses the official generated
-`@opencode-ai/client` instead. Standalone gateway callers without a native domain can still use
+`@opencode/client` instead. Standalone gateway callers without a native domain can still use
 read-only `Service.discover()`; the plugin never starts or stops a service.
 
-**Beta compatibility:** dependencies are pinned to `0.0.0-beta-19157`, matching the tested server
-contract. Older clients using `/api/worktree/{projectID}` receive HTTP 404 on location-scoped
-servers. Updating dependencies alone is insufficient: callers must pass `location` instead of
-`projectID`. Recheck the API and tests when upgrading OpenCode.
+**Version compatibility:** dependencies are pinned to `@opencode/client` and `@opencode/plugin`
+`2.2.0`, matching the tested server. OpenCode gives plugins its own bundled `effect`, so the
+`@opencode/*` versions must match the running OpenCode version. The old `@opencode-ai/*` beta
+packages fail to load on OpenCode 2.2.0 (`Schema.isStartsWith is not a function`). Recheck the
+API and tests when upgrading OpenCode.
 
 ## Installation
 
-Tested with OpenCode 2 `opencode2 v0.0.0-beta-19157` and Bun.
+Tested with OpenCode `2.2.0` and Bun.
 
 **Local plugin directory** — copy this project somewhere (e.g. `<project>/plugins/agent-worktrees`) and
 reference it from your `opencode.json(c)`:
@@ -77,7 +77,6 @@ reference it from your `opencode.json(c)`:
       "options": {
         "directoryRoot": "../.opencode-worktrees", // where managed worktrees live
         "branchPrefix": "agent/",                  // default branch prefix
-        "strategy": "git",                         // native strategy id (auto-negotiated if the build differs)
         "instructions": true                       // inject the worktree usage policy into agent context
       }
     }
@@ -86,7 +85,7 @@ reference it from your `opencode.json(c)`:
 ```
 
 See `example/opencode.jsonc` for a ready-made example. Install dependencies once
-(`bun install` in the plugin folder) so `@opencode-ai/plugin` and `@opencode-ai/client` resolve.
+(`bun install` in the plugin folder) so `@opencode/plugin` and `@opencode/client` resolve.
 
 ## Tools
 
@@ -153,7 +152,6 @@ Remove the authentication worktree if it is safe to do so.
 |---|---|---|
 | `directoryRoot` | `"../.opencode-worktrees"` | Where managed worktree directories are created. Relative paths resolve against the project's canonical directory; absolute paths are used as-is. |
 | `branchPrefix` | `"agent/"` | Prefix for the suggested work branch reported by `worktree_create` (the native API creates detached worktrees; run `git switch -c <branch>` inside before committing). |
-| `strategy` | `"git"` | Native `Worktree.StrategyID` forwarded to `v2.worktree.create`. If the connected build registers a different id (e.g. `git_worktree`), the gateway retries the known alias automatically and caches the winner. |
 | `serverUrl` | *(native plugin context)* | Optional explicit OpenCode server URL. Omit to use `ctx.worktree` on the session's server, including `--standalone`. |
 | `instructions` | `true` | Inject a concise worktree usage policy into agent system context via the `session.context` hook. |
 
@@ -162,9 +160,8 @@ Remove the authentication worktree if it is safe to do so.
 - Worktree API changes between beta releases require compatible dependencies and gateway inputs.
   The default native domain avoids a separate HTTP connection; explicit-server calls still need
   a compatible generated client.
-- Only one native strategy exists; its id was renamed across betas (`git` today, `git_worktree`
-  in other builds). The gateway tries the configured value first, then the known alias, and caches
-  whichever the connected server accepts.
+- The worktree strategy cannot be chosen per call. OpenCode picks it from the project's
+  configuration, so the former `strategy` plugin option was removed (an existing value is ignored).
 - Commit/merge/push of worktree changes is out of scope: OpenCode's native worktree API covers
   lifecycle (create/list/remove/refresh), not Git history manipulation. Use the session's normal
   git tooling for that; keep it isolated from this plugin's lifecycle layer.

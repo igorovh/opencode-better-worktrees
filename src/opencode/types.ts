@@ -15,25 +15,23 @@ export interface ManagedWorktree {
 }
 
 /**
- * Input of the native `v2.worktree.create` call, verified against the running
- * `0.0.0-beta-19157` server:
+ * Input of the native `v2.worktree.create` call (OpenCode 2.2.0):
  * - `directory` is the PARENT directory and `name` the leaf under it (the
  *   server joins them, suffixing the name on collisions);
  * - `branch` is an EXISTING ref that the server attaches the worktree to in
  *   detached mode (`--detach -- <dir> <ref>`); it does NOT create a branch;
- * - `from` would override the source directory and is not used by this plugin.
+ * - `from` would override the source directory and is not used by this plugin;
+ * - the strategy comes from the project's configuration, not from the caller.
  * The created worktree is always in detached HEAD; the agent creates a branch
  * inside it before committing (see the tool output and injected instructions).
  */
 export interface WorktreeCreateRequest {
-  /** Internal ownership guard; the native API derives the project from location. */
   readonly projectID: string
-  readonly strategy: string
   /** Parent directory under which the worktree directory is created. */
   readonly directory: string
   /** Leaf directory name of the worktree. */
   readonly name?: string
-  /** Existing ref to detach the worktree at (defaults to the server's HEAD). */
+  /** Existing ref to detach the worktree at (the server defaults to HEAD). */
   readonly baseRef?: string
 }
 

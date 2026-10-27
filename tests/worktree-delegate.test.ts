@@ -27,7 +27,6 @@ describe("worktree_delegate", () => {
     expect(h.worktrees.createCalls).toHaveLength(1)
     expect(h.worktrees.createCalls[0]).toMatchObject({
       projectID: PROJECT.id,
-      strategy: "git",
       name: "payments",
     })
 

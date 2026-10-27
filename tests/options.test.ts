@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { branchFor, DEFAULT_BRANCH_PREFIX, DEFAULT_DIRECTORY_ROOT, DEFAULT_STRATEGY, resolveDirectoryRoot, resolveOptions } from "../src/options.ts"
+import { branchFor, DEFAULT_BRANCH_PREFIX, DEFAULT_DIRECTORY_ROOT, resolveDirectoryRoot, resolveOptions } from "../src/options.ts"
 import { InvalidInputError } from "../src/utils/errors.ts"
 
 describe("plugin options", () => {
@@ -7,14 +7,13 @@ describe("plugin options", () => {
     const options = resolveOptions({})
     expect(options.directoryRoot).toBe(DEFAULT_DIRECTORY_ROOT)
     expect(options.branchPrefix).toBe(DEFAULT_BRANCH_PREFIX)
-    expect(options.strategy).toBe(DEFAULT_STRATEGY)
     expect(options.instructions).toBe(true)
     expect(options.serverUrl).toBeUndefined()
   })
 
   test("non-object input falls back to defaults", () => {
     for (const raw of [undefined, null, 42, "x"]) {
-      expect(resolveOptions(raw).strategy).toBe(DEFAULT_STRATEGY)
+      expect(resolveOptions(raw).directoryRoot).toBe(DEFAULT_DIRECTORY_ROOT)
     }
   })
 
@@ -22,14 +21,12 @@ describe("plugin options", () => {
     const options = resolveOptions({
       directoryRoot: "/tmp/wt",
       branchPrefix: "wt/",
-      strategy: "git_worktree",
       serverUrl: "http://127.0.0.1:4096",
       instructions: false,
     })
     expect(options).toEqual({
       directoryRoot: "/tmp/wt",
       branchPrefix: "wt/",
-      strategy: "git_worktree",
       serverUrl: "http://127.0.0.1:4096",
       instructions: false,
     })

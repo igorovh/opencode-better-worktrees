@@ -6,7 +6,7 @@
  * narrows the shapes — no reimplementation.
  */
 
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode/plugin"
 import type { SessionsLike, SessionSnapshot } from "./types.ts"
 
 type PluginContext = Parameters<typeof Plugin.define>[0]["setup"] extends (ctx: infer C) => unknown ? C : never

@@ -43,7 +43,7 @@ describe("plugin hygiene", () => {
   })
 
   test("does not reference server-internal modules or manage the service lifecycle", () => {
-    expect(allCode).not.toContain("@opencode-ai/core")
+    expect(allCode).not.toContain("@opencode/core")
     expect(allCode).not.toContain("Service.ensure")
     expect(allCode).not.toContain("Service.stop")
   })
@@ -53,7 +53,7 @@ describe("plugin hygiene", () => {
     for (const file of sources) {
       if (file.replaceAll("\\", "/").endsWith("opencode/gateway.ts")) continue
       const code = readFileSync(file, "utf8")
-      expect(code.match(/from "@opencode-ai\/client/g)).toBeNull()
+      expect(code.match(/from "@opencode\/client/g)).toBeNull()
     }
   })
 })

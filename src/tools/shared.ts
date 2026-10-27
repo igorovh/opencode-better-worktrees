@@ -169,7 +169,6 @@ export interface CreateWorktreeResult {
   readonly from?: string
   /** The native API creates detached worktrees; create `branch` before committing. */
   readonly detached: true
-  readonly strategy: string
   readonly projectID: string
 }
 
@@ -182,7 +181,7 @@ export interface CreateWorktreeResult {
  *   scripts itself; the plugin never reproduces that lifecycle);
  * - serializes concurrent creates per directory with a keyed mutex.
  *
- * Verified native contract (beta-18684): the request names a PARENT directory
+ * Native contract (OpenCode 2.2.0): the request names a PARENT directory
  * plus a leaf `name`, and `baseRef` is detached at an existing ref. The worktree
  * lands in detached HEAD, so the result reports the branch the agent should
  * create there before committing — the plugin itself never shells out to git.
@@ -223,7 +222,6 @@ export async function createWorktree(
     // Native create: OpenCode owns worktree lifecycle, including setup scripts.
     const created = await deps.worktrees.create({
       projectID: deps.project.id,
-      strategy: deps.options.strategy,
       directory: root,
       name,
       baseRef: input.from,
@@ -236,7 +234,6 @@ export async function createWorktree(
       branch,
       from: input.from,
       detached: true as const,
-      strategy: deps.options.strategy,
       projectID: deps.project.id,
     }
   })

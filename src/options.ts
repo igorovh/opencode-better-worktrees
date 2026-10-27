@@ -2,10 +2,7 @@
  * Plugin options (from `opencode.jsonc` → `plugins[].options`) with defaults.
  *
  * Conventions follow OpenCode wherever possible:
- * - `strategy` is the native `Worktree.StrategyID` string forwarded verbatim to
- *   `v2.worktree.create`. The id OpenCode registers has been renamed across
- *   betas (`git` today, `git_worktree` in some builds); the gateway negotiates
- *   automatically, so the value stays configurable without pinning a build.
+ * - The worktree strategy is chosen by OpenCode from the project configuration.
  * - `directoryRoot` decides where managed worktree directories live. The
  *   native create API requires the caller to supply an absolute directory.
  */
@@ -18,8 +15,6 @@ export interface Options {
   readonly directoryRoot: string
   /** Prefix applied to the generated branch name when the agent does not pass an explicit branch. */
   readonly branchPrefix: string
-  /** Native worktree strategy id forwarded to `v2.worktree.create`. */
-  readonly strategy: string
   /** Explicit OpenCode server URL. When omitted, use the plugin's native worktree domain. */
   readonly serverUrl?: string
   /** Whether to inject the concise worktree usage policy into agent context. */
@@ -28,7 +23,6 @@ export interface Options {
 
 export const DEFAULT_DIRECTORY_ROOT = "../.opencode-worktrees"
 export const DEFAULT_BRANCH_PREFIX = "agent/"
-export const DEFAULT_STRATEGY = "git"
 
 function readString(raw: Record<string, unknown>, key: string, fallback: string, what: string): string {
   const value = raw[key]
@@ -67,7 +61,6 @@ export function resolveOptions(raw: unknown): Options {
       "a path relative to the project root or an absolute path",
     ),
     branchPrefix: readString(record, "branchPrefix", DEFAULT_BRANCH_PREFIX, "a Git branch name prefix"),
-    strategy: readString(record, "strategy", DEFAULT_STRATEGY, "an OpenCode native worktree strategy id"),
     serverUrl: readOptionalString(record, "serverUrl"),
     instructions: readBoolean(record, "instructions", true),
   }

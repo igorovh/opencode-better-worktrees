@@ -5,7 +5,7 @@
  * managed worktree without parsing `git status`/`git diff` output ourselves.
  */
 
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode/plugin"
 import { WorktreeFailure } from "../utils/errors.ts"
 import type { FileChange, VcsLike } from "./types.ts"
 

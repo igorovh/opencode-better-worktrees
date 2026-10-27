@@ -41,7 +41,7 @@ export class FakeWorktrees implements WorktreeTransport {
     if (this.createError) throw this.createError
     // Mimics the verified native contract: the worktree lives at <parent>/<leaf>.
     const directory = input.name ? `${input.directory}/${input.name}`.replace(/\/+/g, "/") : input.directory
-    this.entries = [...this.entries, { directory, strategy: input.strategy }]
+    this.entries = [...this.entries, { directory, strategy: "git" }]
     return { directory }
   }
 
@@ -216,6 +216,6 @@ export async function result(tool: { execute: (input: unknown, tool: ToolExecuti
  * A native WorktreeError body, exactly like the generated client throws for
  * the declared 400 response of the worktree routes.
  */
-export function nativeWorktreeError(message: string, forceRequired?: boolean): { name: "WorktreeError"; data: { message: string; forceRequired?: boolean } } {
-  return { name: "WorktreeError", data: { message, forceRequired } }
+export function nativeWorktreeError(message: string, forceRequired?: boolean): { _tag: "WorktreeError"; name: "WorktreeError"; data: { message: string; forceRequired?: boolean } } {
+  return { _tag: "WorktreeError", name: "WorktreeError", data: { message, forceRequired } }
 }

@@ -69,7 +69,7 @@ export function buildDelegateTool(deps: ToolDeps): WorktreeTool {
 
       const created = await createWorktree(deps, { name: input.name, branch: input.branch, from: input.from })
       const result = await spawnWorktreeAgent(deps, {
-        worktree: { directory: created.directory, strategy: created.strategy, name: basenameOf(created.directory) },
+        worktree: { directory: created.directory, name: basenameOf(created.directory) },
         task: input.task,
         agent: input.agent,
         wait: input.wait,
@@ -79,7 +79,6 @@ export function buildDelegateTool(deps: ToolDeps): WorktreeTool {
         directory: created.directory,
         branch: created.branch,
         from: created.from,
-        strategy: created.strategy,
         sessionID: result.sessionID,
         task: result.task,
         started: true,

@@ -9,7 +9,7 @@
  * Plugin ID: "agent-worktrees".
  */
 
-import { Plugin } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
 import { WorktreeGateway } from "./opencode/gateway.ts"
 import { contextSessions } from "./opencode/sessions.ts"
 import { contextVcs } from "./opencode/vcs.ts"
@@ -34,7 +34,7 @@ export default Plugin.define({
     const deps = {
       project,
       worktrees: new WorktreeGateway({
-        project: { id: project.id, directory: ctx.location.directory },
+        project: { id: project.id },
         worktree: ctx.worktree,
         serverUrl: options.serverUrl,
       }),
