@@ -145,6 +145,14 @@ To try local changes, put the folder path in `plugins` instead of the GitHub spe
 
 If the tools do not appear, check the OpenCode server log (`~/.local/share/opencode/log/`).
 
+To re-record the demo GIF with [VHS](https://github.com/charmbracelet/vhs), build a throwaway repo and OpenCode
+profile, then run the tape from that folder and copy its `demo.gif` to `docs/`:
+
+```sh
+bun docs/demo-setup.ts ~/demo   # any empty folder; the recording shows this path
+cd ~/demo && vhs /path/to/opencode-better-worktrees/docs/demo.tape
+```
+
 ## License
 
 [MIT](LICENSE)
