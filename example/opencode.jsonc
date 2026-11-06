@@ -1,20 +1,15 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  // Example: load the agent-worktrees plugin from a sibling folder with options.
   "plugins": [
     {
-      "package": "../opencode2-worktrees",
+      "package": "github:igorovh/opencode-better-worktrees#v0.2.0",
       "options": {
-        // Where managed worktree directories are created. Relative to the
-        // project's canonical directory; use an absolute path if preferred.
-        "directoryRoot": "../.opencode-worktrees",
-        // Branch created for a new worktree when the agent passes no branch:
-        // "agent/<name>".
+        // Omit to let OpenCode choose its per-project worktree location.
+        // Relative paths resolve against the project directory.
+        "directoryRoot": "../.worktrees",
+        // Suggested work branch: "<branchPrefix><name>".
         "branchPrefix": "agent/",
-        // Omit to use the native domain on the session's server.
-        // Set explicitly only when a different HTTP server is intended, e.g.
-        // "serverUrl": "http://127.0.0.1:4096"
-        // Inject the concise worktree usage policy into agent context.
+        // Add the short worktree usage policy to the agent's context.
         "instructions": true
       }
     }
