@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "Keep the peer range as the minimum supported OpenCode; only bump the dev pin used for tests.",
+      "matchDepTypes": ["peerDependencies"],
+      "enabled": false
+    },
+    {
+      "groupName": "opencode",
+      "matchPackageNames": ["@opencode/**"]
+    },
+    {
+      "groupName": "dev tooling",
+      "matchDepTypes": ["devDependencies"],
+      "matchPackageNames": ["!@opencode/**"],
+      "matchUpdateTypes": ["minor", "patch"]
+    }
+  ]
+}
