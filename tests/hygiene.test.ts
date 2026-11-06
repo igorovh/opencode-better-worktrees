@@ -1,7 +1,4 @@
-/**
- * Static hygiene checks: the plugin must never implement worktree lifecycle
- * itself and must not reference APIs it may not use.
- */
+// Static checks: no worktree lifecycle commands and no modules the host does not provide.
 import { describe, expect, test } from "bun:test"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
@@ -48,12 +45,10 @@ describe("plugin hygiene", () => {
     expect(allCode).not.toContain("Service.stop")
   })
 
-  test("HTTP client access is confined to the gateway", () => {
-    // Only gateway.ts may import the generated client; other modules must use deps.
-    for (const file of sources) {
-      if (file.replaceAll("\\", "/").endsWith("opencode/gateway.ts")) continue
-      const code = readFileSync(file, "utf8")
-      expect(code.match(/from "@opencode\/client/g)).toBeNull()
-    }
+  test("imports only modules the OpenCode host provides", () => {
+    // A GitHub install gets no dependencies; anything else would be a second, mismatched copy.
+    const imports = [...allCode.matchAll(/from "([^"]+)"/g)].map((match) => match[1]!)
+    const external = imports.filter((name) => !name.startsWith(".") && !name.startsWith("node:"))
+    expect(new Set(external)).toEqual(new Set(["@opencode/plugin"]))
   })
 })

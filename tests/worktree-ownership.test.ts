@@ -3,7 +3,6 @@ import { buildListTool } from "../src/tools/list.ts"
 import { buildCreateTool } from "../src/tools/create.ts"
 import { buildUseTool } from "../src/tools/use.ts"
 import { buildRemoveTool } from "../src/tools/remove.ts"
-import { buildSpawnAgentTool } from "../src/tools/spawn-agent.ts"
 import { output, result, makeHarness, PROJECT } from "./helpers/fakes.ts"
 
 /**
@@ -41,9 +40,6 @@ describe("worktree ownership across projects", () => {
 
     const removed = await result(buildRemoveTool(h.deps), { worktree: foreignDir })
     expect(removed.output).toMatchObject({ message: expect.stringContaining("not a worktree managed by OpenCode") })
-
-    const spawned = await result(buildSpawnAgentTool(h.deps), { worktree: foreignDir, task: "Task." })
-    expect(spawned.output).toMatchObject({ message: expect.stringContaining("not a worktree managed by OpenCode") })
   })
 
   test("project identity comes from the plugin location, not from git remotes", async () => {

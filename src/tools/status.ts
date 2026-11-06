@@ -1,8 +1,3 @@
-/**
- * `worktree_status` — inspect one managed worktree using OpenCode's
- * location-scoped VCS APIs (branch info, working-copy status, optional diff).
- */
-
 import type { ToolDeps, WorktreeTool } from "./shared.ts"
 import { defineTool, resolveWorktree, summarizeChanges, withJson } from "./shared.ts"
 

@@ -1,9 +1,4 @@
-/**
- * Test doubles for the OpenCode API layer. No HTTP and no git in unit tests:
- * the wrappers behind `ToolDeps` are faked, which keeps tool logic the only
- * thing under test. The integration test (integration/git-repo.test.ts) is the
- * place where the real generated client talks to an HTTP server.
- */
+// Fakes behind `ToolDeps`; integration/git-repo.test.ts covers real git.
 
 import { KeyedMutex } from "../../src/utils/mutex.ts"
 import { resolveOptions, type Options } from "../../src/options.ts"
@@ -39,8 +34,8 @@ export class FakeWorktrees implements WorktreeTransport {
     if (input.projectID !== PROJECT.id) throw new Error(`unknown project ${input.projectID}`)
     this.createCalls.push(input)
     if (this.createError) throw this.createError
-    // Mimics the verified native contract: the worktree lives at <parent>/<leaf>.
-    const directory = input.name ? `${input.directory}/${input.name}`.replace(/\/+/g, "/") : input.directory
+    // Native contract: <parent>/<name>, or OpenCode's own per-project location without a parent.
+    const directory = `${input.directory ?? "/opencode/worktree/prj"}/${input.name}`.replace(/\/+/g, "/")
     this.entries = [...this.entries, { directory, strategy: "git" }]
     return { directory }
   }
@@ -59,15 +54,9 @@ export class FakeWorktrees implements WorktreeTransport {
 
 export class FakeSessions implements SessionsLike {
   private readonly sessions = new Map<string, SessionSnapshot>()
-  private nextID = 1
   readonly moves: { sessionID: string; directory: string }[] = []
-  readonly prompts: { sessionID: string; text: string }[] = []
-  readonly waits: string[] = []
 
-  constructor(
-    private readonly projectID: string = PROJECT.id,
-    initial?: SessionSnapshot,
-  ) {
+  constructor(initial?: SessionSnapshot) {
     if (initial) this.sessions.set(initial.id, initial)
   }
 
@@ -82,30 +71,10 @@ export class FakeSessions implements SessionsLike {
     return session
   }
 
-  async createAtLocation(input: { title?: string; directory: string }): Promise<SessionSnapshot> {
-    const snapshot: SessionSnapshot = {
-      id: `ses_${this.nextID++}`,
-      projectID: this.projectID,
-      directory: input.directory,
-      title: input.title,
-    }
-    this.sessions.set(snapshot.id, snapshot)
-    return snapshot
-  }
-
   async move(sessionID: string, directory: string): Promise<void> {
     const session = await this.get(sessionID)
     this.moves.push({ sessionID, directory })
     this.sessions.set(sessionID, { ...session, directory })
-  }
-
-  async prompt(sessionID: string, text: string): Promise<unknown> {
-    this.prompts.push({ sessionID, text })
-    return { sessionID, text }
-  }
-
-  async wait(sessionID: string): Promise<void> {
-    this.waits.push(sessionID)
   }
 }
 
@@ -151,15 +120,6 @@ export class FakeFs implements FsLike {
   }
 }
 
-export class FakeAgents {
-  readonly known = new Set<string>(["build", "plan"])
-
-  async get(agentID: string): Promise<unknown> {
-    if (!this.known.has(agentID)) throw new Error(`agent not found: ${agentID}`)
-    return { id: agentID }
-  }
-}
-
 export interface Harness {
   deps: ToolDeps
   options: Options
@@ -167,27 +127,24 @@ export interface Harness {
   sessions: FakeSessions
   vcs: FakeVcs
   fs: FakeFs
-  agents: FakeAgents
 }
 
 export function makeHarness(overrides?: { options?: Record<string, unknown>; initialSession?: SessionSnapshot }): Harness {
   const options = resolveOptions(overrides?.options ?? {})
   const worktrees = new FakeWorktrees()
-  const sessions = new FakeSessions(PROJECT.id, overrides?.initialSession ?? { id: "ses_main", projectID: PROJECT.id, directory: PROJECT.directory })
+  const sessions = new FakeSessions(overrides?.initialSession ?? { id: "ses_main", projectID: PROJECT.id, directory: PROJECT.directory })
   const vcs = new FakeVcs()
   const fs = new FakeFs()
-  const agents = new FakeAgents()
   const deps: ToolDeps = {
     project: PROJECT,
     worktrees,
     sessions,
     vcs,
     fs,
-    agents,
     options,
     locks: new KeyedMutex(),
   }
-  return { deps, options, worktrees, sessions, vcs, fs, agents }
+  return { deps, options, worktrees, sessions, vcs, fs }
 }
 
 /** Executor context stub, like the one OpenCode hands to tool executors. */

@@ -18,14 +18,41 @@ describe("worktree_create", () => {
     expect(out.detached).toBe(true)
     expect(out.branch).toBe("agent/auth") // suggested branch (default branchPrefix)
 
-    // Native create received the exact verified beta request shape:
-    // `directory` is the parent, `name` the leaf, `baseRef` absent without `from`.
+    // Without directoryRoot, OpenCode picks its per-project location.
     expect(h.worktrees.createCalls).toHaveLength(1)
     const call = h.worktrees.createCalls[0]!
     expect(call.projectID).toBe(PROJECT.id)
     expect(call.name).toBe("auth")
-    expect(call.directory).toBe(resolveDirectoryRoot(h.options, PROJECT.canonical))
+    expect(call.directory).toBeUndefined()
     expect(call.baseRef).toBeUndefined()
+  })
+
+  test("a configured directoryRoot is sent as the parent directory", async () => {
+    const h = makeHarness({ options: { directoryRoot: "../.worktrees" } })
+    await output(buildCreateTool(h.deps), { name: "auth" })
+    expect(h.worktrees.createCalls[0]!.directory).toBe(resolveDirectoryRoot(h.options, PROJECT.canonical)!)
+  })
+
+  test("rejects branch names and starting refs that are unsafe for git or a shell", async () => {
+    const h = makeHarness()
+    const tool = buildCreateTool(h.deps)
+    for (const input of [
+      { name: "a", branch: "x; rm -rf ~" },
+      { name: "a", branch: "-D" },
+      { name: "a", branch: "a..b" },
+      { name: "a", from: "--upload-pack=evil" },
+      { name: "a", from: "main $(id)" },
+    ]) {
+      const res = await result(tool, input)
+      expect(res.output).toMatchObject({ ok: false, message: expect.stringContaining("Invalid") })
+    }
+    expect(h.worktrees.createCalls).toHaveLength(0)
+  })
+
+  test("accepts revision suffixes in the starting ref", async () => {
+    const h = makeHarness()
+    await output(buildCreateTool(h.deps), { name: "a", from: "HEAD~2" })
+    expect(h.worktrees.createCalls[0]!.baseRef).toBe("HEAD~2")
   })
 
   test("forwards `from` as the detach ref and `branch` as the suggested branch name", async () => {
@@ -71,8 +98,8 @@ describe("worktree_create", () => {
   })
 
   test("refuses to touch an existing unmanaged directory", async () => {
-    const h = makeHarness()
-    const target = resolveInsideRoot(resolveDirectoryRoot(h.options, PROJECT.canonical), "taken")
+    const h = makeHarness({ options: { directoryRoot: "/worktrees" } })
+    const target = resolveInsideRoot(resolveDirectoryRoot(h.options, PROJECT.canonical)!, "taken")
     h.fs.add(target)
     const tool = buildCreateTool(h.deps)
 

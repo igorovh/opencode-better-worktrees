@@ -1,7 +1,3 @@
-/**
- * `worktree_create` — create an isolated OpenCode-managed Git worktree.
- */
-
 import { InvalidInputError } from "../utils/errors.ts"
 import type { ToolDeps, WorktreeTool } from "./shared.ts"
 import { createWorktree, defineTool, withJson } from "./shared.ts"
@@ -15,7 +11,7 @@ export function buildCreateTool(deps: ToolDeps): WorktreeTool {
       "with risky changes, or when independent tasks should be isolated. OpenCode itself creates the worktree " +
       "through its native Worktree API (including any configured setup scripts); never run git worktree " +
       "commands manually. After creating a worktree for your own work, move the current session into it with " +
-      "worktree_use before editing files, or delegate parallel tasks with worktree_delegate.",
+      "worktree_use before editing files.",
     input: {
       type: "object",
       properties: {
@@ -47,14 +43,11 @@ export function buildCreateTool(deps: ToolDeps): WorktreeTool {
         throw new InvalidInputError('The "name" input is required.')
       }
       const result = await createWorktree(deps, { name: input.name, branch: input.branch, from: input.from })
-      const switchNote = result.branch
-        ? ` The native API creates detached worktrees — run \`git switch -c ${result.branch}\` inside before committing.`
-        : ""
       return {
         output: { ...result },
         content: withJson(
-          `Created managed worktree "${result.name}" at ${result.directory}.${switchNote}` +
-            " Use worktree_use to move this session there, or worktree_spawn_agent to delegate work to it.",
+          `Created managed worktree "${result.name}" at ${result.directory}. It starts in detached HEAD: run ` +
+            `\`git switch -c ${result.branch}\` inside it before committing. Use worktree_use to move this session there.`,
           { ...result },
         ),
         metadata: { worktree: result.directory },
@@ -62,5 +55,3 @@ export function buildCreateTool(deps: ToolDeps): WorktreeTool {
     },
   })
 }
-
-export { createWorktree }

@@ -1,21 +1,7 @@
-/**
- * Path validation and comparison helpers.
- *
- * The plugin never trusts raw paths from the agent: worktree names are
- * strictly validated, generated directories are containment-checked against
- * the configured root, and directory comparisons are normalized per platform
- * (case-insensitive on Windows).
- */
-
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { InvalidInputError } from "./errors.ts"
 
-/**
- * Worktree names must be a single safe path segment:
- * - starts with an alphanumeric character
- * - may contain alphanumerics, dots, underscores, and dashes
- * - 1-64 characters, no separators, no ".."
- */
+/** A single safe path segment: 1-64 chars, starts alphanumeric, no separators or "..". */
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 export function isValidWorktreeName(name: unknown): boolean {
@@ -35,21 +21,20 @@ export function assertValidWorktreeName(name: string): string {
   return name
 }
 
-function normalizeForCompare(path: string): string {
+// Default Windows and macOS file systems ignore case; Linux does not.
+const CASE_INSENSITIVE = process.platform === "win32" || process.platform === "darwin"
+
+/** Comparison and lock key for a path on the current platform. */
+export function pathKey(path: string): string {
   const resolved = resolve(path)
-  // Windows file systems are case-insensitive; normalize case for comparisons only.
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved
+  return CASE_INSENSITIVE ? resolved.toLowerCase() : resolved
 }
 
-/** True when both paths point at the same directory on the current platform. */
 export function samePath(a: string, b: string): boolean {
-  return normalizeForCompare(a) === normalizeForCompare(b)
+  return pathKey(a) === pathKey(b)
 }
 
-/**
- * Resolve `name` (a validated single segment) inside `root`, guaranteeing the
- * result stays inside `root`. Defense in depth on top of name validation.
- */
+/** Resolve a validated `name` inside `root`; re-checks containment as defense in depth. */
 export function resolveInsideRoot(root: string, name: string): string {
   const target = resolve(join(resolve(root), name))
   if (!isInside(root, target)) {
@@ -64,7 +49,6 @@ export function isInside(root: string, target: string): boolean {
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel)
 }
 
-/** Basename of a directory path, platform-agnostic. */
 export function basenameOf(directory: string): string {
   const parts = resolve(directory).split(/[\\/]/)
   return parts[parts.length - 1] ?? ""

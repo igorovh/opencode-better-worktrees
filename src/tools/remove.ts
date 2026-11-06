@@ -1,18 +1,7 @@
-/**
- * `worktree_remove` — remove an OpenCode-managed worktree through the native
- * remove API, with strict safety guards:
- *
- * - only worktrees returned by the native list are addressable;
- * - the project root / canonical directory is never removable;
- * - `force` defaults to false and is NEVER escalated automatically;
- * - the native `forceRequired` hint is surfaced so the agent can explain to
- *   the user what explicit confirmation is needed.
- */
-
 import type { ToolDeps, WorktreeTool } from "./shared.ts"
 import { defineTool, resolveWorktree, withJson } from "./shared.ts"
 import { toWorktreeFailure } from "../utils/errors.ts"
-import { samePath } from "../utils/paths.ts"
+import { pathKey, samePath } from "../utils/paths.ts"
 
 export function buildRemoveTool(deps: ToolDeps): WorktreeTool {
   return defineTool({
@@ -61,7 +50,7 @@ export function buildRemoveTool(deps: ToolDeps): WorktreeTool {
       }
 
       // Serialize against concurrent creates of the same directory.
-      return deps.locks.run(resolved.directory.toLowerCase(), async () => {
+      return deps.locks.run(pathKey(resolved.directory), async () => {
         try {
           await deps.worktrees.remove({ projectID: deps.project.id, directory: resolved.directory, force })
           const output = { removed: true, directory: resolved.directory, name: resolved.name, forced: force }
@@ -71,8 +60,6 @@ export function buildRemoveTool(deps: ToolDeps): WorktreeTool {
             metadata: { worktree: resolved.directory },
           }
         } catch (error) {
-          // Normalize WorktreeFailure instances and raw native WorktreeError
-          // bodies alike; native messages and forceRequired survive.
           const failure = toWorktreeFailure(error)
           const output = {
             removed: false,

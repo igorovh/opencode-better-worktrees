@@ -1,7 +1,3 @@
-/**
- * `worktree_list` — list all OpenCode-managed worktrees for the current project.
- */
-
 import type { ToolDeps, WorktreeTool } from "./shared.ts"
 import { basenameOf, samePath } from "../utils/paths.ts"
 import { defineTool, summarizeChanges } from "./shared.ts"
@@ -11,7 +7,7 @@ export function buildListTool(deps: ToolDeps): WorktreeTool {
     name: "worktree_list",
     description:
       "List every OpenCode-managed Git worktree for the current project, including the project root. " +
-      "Use this to see which isolated workspaces exist before creating, using, delegating to, or removing " +
+      "Use this to see which isolated workspaces exist before creating, using, or removing " +
       "a worktree, or when the user asks about active worktrees. Each entry reports the absolute directory, " +
       "the native strategy used to manage it, and (with includeStatus) its branch and pending changes. " +
       "Information comes from OpenCode's native Worktree API, not from parsing git output.",
