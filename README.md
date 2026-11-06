@@ -6,6 +6,13 @@ strategy and bookkeeping stay in charge, and the plugin never runs `git worktree
 
 > Supports OpenCode V2 only, version 2.2.5 or newer. V1 is not supported.
 
+<p align="center">
+  <img src="docs/demo.gif" alt="The agent creates a worktree from HEAD~1 and lists the project's worktrees" width="1000">
+</p>
+
+The demo shows the agent creating an `auth-refactor` worktree from `HEAD~1` with `worktree_create`, listing the
+project's worktrees, and `git worktree list` confirming the new detached checkout.
+
 ```text
 You:    Implement the authentication refactor in a separate worktree.
 Agent:  → worktree_create  { name: "auth-refactor" }
