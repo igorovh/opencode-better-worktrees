@@ -1,21 +1,29 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "dependencyDashboard": true,
+  "rebaseWhen": "behind-base-branch",
+  "platformAutomerge": true,
+  "automergeType": "pr",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["before 6am on monday"]
+  },
   "packageRules": [
     {
-      "description": "Keep the peer range as the minimum supported OpenCode; only bump the dev pin used for tests.",
+      "description": "Merge every update on green CI; the branch ruleset requires the test jobs, so a failing major stays open.",
+      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "The peer range is the minimum supported OpenCode, not the latest; only the dev pin is bumped.",
       "matchDepTypes": ["peerDependencies"],
       "enabled": false
     },
     {
-      "groupName": "opencode",
-      "matchPackageNames": ["@opencode/**"]
-    },
-    {
-      "groupName": "dev tooling",
-      "matchDepTypes": ["devDependencies"],
-      "matchPackageNames": ["!@opencode/**"],
-      "matchUpdateTypes": ["minor", "patch"]
+      "groupName": "opencode host",
+      "matchPackageNames": ["@opencode/**", "@opentui/**", "solid-js"]
     }
   ]
 }
