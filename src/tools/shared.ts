@@ -1,20 +1,12 @@
-/**
- * Shared tool infrastructure: dependency bag, tool definition shape, worktree
- * resolution, and the core create/spawn operations reused by the individual
- * tools and by `worktree_delegate`.
- *
- * There is exactly one implementation of each native operation. Delegation
- * composes them; it never duplicates them.
- */
-
 import type { Options } from "../options.ts"
 import { branchFor, resolveDirectoryRoot } from "../options.ts"
 import { InvalidInputError, WorktreeFailure, toWorktreeFailure } from "../utils/errors.ts"
-import { assertValidWorktreeName, basenameOf, resolveInsideRoot, samePath } from "../utils/paths.ts"
+import { assertValidWorktreeName, basenameOf, pathKey, resolveInsideRoot, samePath } from "../utils/paths.ts"
+import { assertValidRef } from "../utils/refs.ts"
 import type { KeyedMutex } from "../utils/mutex.ts"
 import type { FileChange, FsLike, ManagedWorktree, SessionsLike, VcsLike, WorktreeTransport } from "../opencode/types.ts"
 
-/** Executor context handed to every tool by OpenCode (subset we rely on). */
+/** The subset of OpenCode's tool executor context this plugin uses. */
 export interface ToolExecutionContext {
   readonly sessionID: string
   readonly agent: string
@@ -23,7 +15,6 @@ export interface ToolExecutionContext {
   progress(update: Record<string, unknown>): Promise<void>
 }
 
-/** Structured tool result per the V2 contract (`{ output, content }`). */
 export interface ToolTextContent {
   readonly type: "text"
   readonly text: string
@@ -35,7 +26,7 @@ export interface ToolExecutionResult {
   readonly metadata?: Record<string, unknown>
 }
 
-/** A registerable tool definition (shape-compatible with the V2 `tool.transform` draft). */
+/** Shape accepted by `ctx.tool.transform` drafts, with plain JSON Schema input. */
 export interface WorktreeTool {
   readonly name: string
   readonly description: string
@@ -44,29 +35,22 @@ export interface WorktreeTool {
   readonly execute: (input: unknown, tool: ToolExecutionContext) => Promise<ToolExecutionResult>
 }
 
-/** Everything a tool needs. All I/O is injected, which keeps tools unit-testable. */
+/** All I/O a tool needs, injected so tools stay unit-testable. */
 export interface ToolDeps {
-  readonly project: { id: string; directory: string; canonical: string }
+  readonly project: { readonly id: string; readonly directory: string; readonly canonical: string }
   readonly worktrees: WorktreeTransport
   readonly sessions: SessionsLike
   readonly vcs: VcsLike
   readonly fs: FsLike
-  readonly agents: { get(agentID: string): Promise<unknown> }
   readonly options: Options
   readonly locks: KeyedMutex
 }
 
-/** Render a compact JSON block appended to human-readable tool output. */
 export function withJson(human: string, payload: Record<string, unknown>): ToolTextContent[] {
   return [{ type: "text", text: `${human}\n${JSON.stringify(payload, null, 2)}` }]
 }
 
-/**
- * Recursively strip `undefined` values so tool results satisfy the strict
- * JSON validation OpenCode applies to tool `output` values. Optional object
- * keys are dropped instead of becoming `undefined`; `undefined` array items
- * become `null`.
- */
+/** Drop `undefined` keys (and null out `undefined` array items): OpenCode validates tool output as strict JSON. */
 export function jsonSafe<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => (item === undefined ? null : jsonSafe(item))) as unknown as T
@@ -82,14 +66,7 @@ export function jsonSafe<T>(value: T): T {
   return value
 }
 
-/**
- * Finalize a tool definition: expected failures (`WorktreeFailure`,
- * `InvalidInputError`, and raw native `WorktreeError` bodies) become
- * structured results the agent can act on; unexpected errors still throw so
- * OpenCode reports them as tool errors. Successful outputs are pruned to
- * strict JSON (no `undefined` fields) before they reach OpenCode's
- * output-schema validation.
- */
+/** Expected failures become structured results the agent can act on; unexpected errors still throw. */
 export function defineTool(tool: WorktreeTool): WorktreeTool {
   return {
     ...tool,
@@ -118,17 +95,11 @@ export function defineTool(tool: WorktreeTool): WorktreeTool {
 }
 
 export interface ResolvedWorktree extends ManagedWorktree {
-  /** Directory basename; matches the `name` the worktree was created with. */
+  /** Directory basename; matches the name the worktree was created with. */
   readonly name: string
 }
 
-/**
- * Resolve an agent-facing `worktree` reference (name, directory basename, or
- * absolute directory) against the CURRENT project's native worktree list.
- *
- * This is the ownership boundary of the whole plugin: anything that is not
- * returned by `v2.worktree.list` for this project is unusable here.
- */
+/** Resolve a name or directory against THIS project's native list; anything else is refused. */
 export async function resolveWorktree(deps: ToolDeps, reference: string): Promise<ResolvedWorktree> {
   if (typeof reference !== "string" || reference.trim() === "") {
     throw new InvalidInputError('The "worktree" input is required: pass a worktree name or directory.')
@@ -160,58 +131,42 @@ export async function resolveWorktree(deps: ToolDeps, reference: string): Promis
 
 export interface CreateWorktreeResult {
   readonly created: true
-  /** Absolute worktree path as reported by the native API. */
   readonly directory: string
   readonly name: string
   /** Branch the agent should create inside the worktree before committing. */
-  readonly branch?: string
-  /** Base ref the worktree was detached at, when explicitly requested. */
+  readonly branch: string
   readonly from?: string
-  /** The native API creates detached worktrees; create `branch` before committing. */
+  /** Native worktrees start in detached HEAD. */
   readonly detached: true
   readonly projectID: string
 }
 
-/**
- * Core create operation, shared by `worktree_create` and `worktree_delegate`.
- *
- * - validates the name (single safe path segment, no traversal);
- * - resolves a collision-free directory inside the configured root;
- * - calls the native `v2.worktree.create` (OpenCode runs any configured setup
- *   scripts itself; the plugin never reproduces that lifecycle);
- * - serializes concurrent creates per directory with a keyed mutex.
- *
- * Native contract (OpenCode 2.2.0): the request names a PARENT directory
- * plus a leaf `name`, and `baseRef` is detached at an existing ref. The worktree
- * lands in detached HEAD, so the result reports the branch the agent should
- * create there before committing — the plugin itself never shells out to git.
- */
+/** Validate input, refuse duplicates, then call the native create (which also runs OpenCode setup scripts). */
 export async function createWorktree(
   deps: ToolDeps,
   input: { name: string; branch?: string; from?: string },
 ): Promise<CreateWorktreeResult> {
   const name = assertValidWorktreeName(input.name)
+  const branch = assertValidRef(branchFor(deps.options, name, input.branch), "branch")
+  const from = input.from === undefined ? undefined : assertValidRef(input.from, "starting ref", { revision: true })
   const root = resolveDirectoryRoot(deps.options, deps.project.canonical)
-  const directory = resolveInsideRoot(root, name)
-  const branch = branchFor(deps.options, name, input.branch)
+  const directory = root === undefined ? undefined : resolveInsideRoot(root, name)
 
-  return deps.locks.run(directory.toLowerCase(), async () => {
+  return deps.locks.run(directory === undefined ? `name:${pathKey(name)}` : pathKey(directory), async () => {
     const existing = await deps.worktrees.list({ projectID: deps.project.id })
 
-    const duplicate = existing.find((entry) => samePath(entry.directory, directory))
+    const duplicate = directory === undefined ? undefined : existing.find((entry) => samePath(entry.directory, directory))
     if (duplicate) {
       throw new WorktreeFailure({
         message: `A managed worktree already exists at "${duplicate.directory}". Pick a different name.`,
       })
     }
-    const nameTaken = existing.some((entry) => samePath(basenameOf(entry.directory), name))
-    if (nameTaken) {
+    if (existing.some((entry) => samePath(basenameOf(entry.directory), name))) {
       throw new WorktreeFailure({
         message: `A managed worktree named "${name}" already exists. Pick a different name.`,
       })
     }
-
-    if (await deps.fs.exists(directory)) {
+    if (directory !== undefined && (await deps.fs.exists(directory))) {
       throw new WorktreeFailure({
         message:
           `Directory "${directory}" already exists but is not an OpenCode-managed worktree. ` +
@@ -219,12 +174,11 @@ export async function createWorktree(
       })
     }
 
-    // Native create: OpenCode owns worktree lifecycle, including setup scripts.
     const created = await deps.worktrees.create({
       projectID: deps.project.id,
       directory: root,
       name,
-      baseRef: input.from,
+      baseRef: from,
     })
 
     return {
@@ -232,61 +186,13 @@ export async function createWorktree(
       directory: created.directory,
       name: basenameOf(created.directory),
       branch,
-      from: input.from,
+      from,
       detached: true as const,
       projectID: deps.project.id,
     }
   })
 }
 
-export interface SpawnAgentResult {
-  readonly sessionID: string
-  readonly directory: string
-  readonly task: string
-  readonly started: true
-  readonly waited?: true
-}
-
-/**
- * Core spawn operation, shared by `worktree_spawn_agent` and
- * `worktree_delegate`. Creates a real OpenCode session whose location is the
- * worktree, then hands the task to it through the official prompt API.
- */
-export async function spawnWorktreeAgent(
-  deps: ToolDeps,
-  input: { worktree: ResolvedWorktree; task: string; agent?: string; model?: { providerID: string; id: string }; wait?: boolean },
-): Promise<SpawnAgentResult> {
-  const task = input.task
-  if (typeof task !== "string" || task.trim() === "") {
-    throw new InvalidInputError('The "task" input is required and must describe the work for the new session.')
-  }
-
-  if (input.agent !== undefined) {
-    try {
-      await deps.agents.get(input.agent)
-    } catch {
-      throw new WorktreeFailure({
-        message: `Agent "${input.agent}" is not available in this project. Omit "agent" to use the default, or check the configured agent name.`,
-      })
-    }
-  }
-
-  const title = task.replaceAll(/\s+/g, " ").trim().slice(0, 60) || `Worktree task: ${input.worktree.name}`
-  const session = await deps.sessions.createAtLocation({
-    title,
-    agent: input.agent,
-    model: input.model,
-    directory: input.worktree.directory,
-  })
-  await deps.sessions.prompt(session.id, task)
-  if (input.wait) {
-    await deps.sessions.wait(session.id)
-    return { sessionID: session.id, directory: input.worktree.directory, task, started: true, waited: true }
-  }
-  return { sessionID: session.id, directory: input.worktree.directory, task, started: true }
-}
-
-/** Aggregate a native status list into counters used by status/list outputs. */
 export function summarizeChanges(changes: readonly FileChange[]): {
   changes: number
   additions: number

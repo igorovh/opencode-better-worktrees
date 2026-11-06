@@ -1,8 +1,3 @@
-/**
- * `worktree_refresh` — reconcile OpenCode's stored worktree state with the
- * project's repositories via the native refresh API.
- */
-
 import type { ToolDeps, WorktreeTool } from "./shared.ts"
 import { defineTool, withJson } from "./shared.ts"
 

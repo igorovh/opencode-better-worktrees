@@ -1,8 +1,30 @@
 import { describe, expect, test } from "bun:test"
-import type { WorktreeApi } from "@opencode/client/promise/api"
 import { WorktreeGateway, normalizeTransportError } from "../src/opencode/gateway.ts"
+import type { NativeWorktreeApi } from "../src/opencode/types.ts"
 import { WorktreeFailure, isWorktreeFailure } from "../src/utils/errors.ts"
 import { nativeWorktreeError, PROJECT } from "./helpers/fakes.ts"
+
+function recordingApi(overrides: Partial<NativeWorktreeApi> = {}) {
+  const calls: { operation: string; input: unknown }[] = []
+  const api: NativeWorktreeApi = {
+    async list(input) {
+      calls.push({ operation: "list", input })
+      return [{ directory: "/repo" }]
+    },
+    async create(input) {
+      calls.push({ operation: "create", input })
+      return { directory: "/worktrees/task" }
+    },
+    async remove(input) {
+      calls.push({ operation: "remove", input })
+    },
+    async refresh(input) {
+      calls.push({ operation: "refresh", input })
+    },
+    ...overrides,
+  }
+  return { api, calls }
+}
 
 describe("gateway error normalization", () => {
   test("native WorktreeError bodies become WorktreeFailure with forceRequired", () => {
@@ -22,135 +44,95 @@ describe("gateway error normalization", () => {
     expect(failure.forceRequired).toBeUndefined()
   })
 
-  test("generic errors keep their message", () => {
-    const failure = normalizeTransportError(new Error("boom"))
-    expect(failure.message).toBe("boom")
-  })
-
-  test("non-error throwables are stringified", () => {
+  test("generic errors and non-error throwables keep their message", () => {
+    expect(normalizeTransportError(new Error("boom")).message).toBe("boom")
     expect(normalizeTransportError("plain string").message).toBe("plain string")
   })
 })
 
-
 describe("WorktreeGateway", () => {
-  test("uses the native plugin domain scoped by projectID for every operation", async () => {
-    const calls: { operation: string; input: unknown }[] = []
-    const directory = "/worktrees/task"
-    const worktree: WorktreeApi = {
-      async list(input) {
-        calls.push({ operation: "list", input })
-        return [{ directory: PROJECT.directory }, { directory, strategy: "git" }]
-      },
-      async create(input) {
-        calls.push({ operation: "create", input })
-        return { directory }
-      },
-      async remove(input) { calls.push({ operation: "remove", input }) },
-      async refresh(input) { calls.push({ operation: "refresh", input }) },
-    }
-    const gateway = new WorktreeGateway({ project: PROJECT, worktree })
+  test("sends projectID on every native call and maps baseRef to the native starting ref", async () => {
+    const { api, calls } = recordingApi()
+    const gateway = new WorktreeGateway({ projectID: () => PROJECT.id, worktree: api })
 
-    expect(await gateway.list({ projectID: PROJECT.id })).toEqual([
-      { directory: PROJECT.directory }, { directory, strategy: "git" },
-    ])
-    expect(await gateway.create({ projectID: PROJECT.id, directory: "/worktrees", name: "task", baseRef: "origin/pr-209" })).toEqual({ directory })
-    await gateway.remove({ projectID: PROJECT.id, directory, force: false })
+    await gateway.list({ projectID: PROJECT.id })
+    await gateway.create({ projectID: PROJECT.id, directory: "/worktrees", name: "task", baseRef: "origin/pr-209" })
+    await gateway.remove({ projectID: PROJECT.id, directory: "/worktrees/task", force: false })
     await gateway.refresh({ projectID: PROJECT.id })
 
     expect(calls).toEqual([
       { operation: "list", input: { projectID: PROJECT.id } },
-      { operation: "create", input: { projectID: PROJECT.id, directory: "/worktrees", name: "task", branch: "origin/pr-209" } },
-      { operation: "remove", input: { projectID: PROJECT.id, directory, force: false } },
+      { operation: "create", input: { projectID: PROJECT.id, name: "task", directory: "/worktrees", branch: "origin/pr-209" } },
+      { operation: "remove", input: { projectID: PROJECT.id, directory: "/worktrees/task", force: false } },
       { operation: "refresh", input: { projectID: PROJECT.id } },
     ])
   })
 
-  test("omitted baseRef leaves branch out so the server defaults to HEAD", async () => {
-    const calls: unknown[] = []
-    const directory = "/worktrees/task"
-    const worktree: WorktreeApi = {
-      async list() { return [] },
-      async create(input) {
-        calls.push(input)
-        return { directory }
-      },
-      async remove() {},
-      async refresh() {},
-    }
-    const gateway = new WorktreeGateway({ project: PROJECT, worktree })
+  test("omitted directory and baseRef stay out of the request so OpenCode picks the location and HEAD", async () => {
+    const { api, calls } = recordingApi()
+    const gateway = new WorktreeGateway({ projectID: () => PROJECT.id, worktree: api })
 
-    expect(await gateway.create({ projectID: PROJECT.id, directory: "/worktrees", name: "task" })).toEqual({ directory })
-    expect(calls).toEqual([{ projectID: PROJECT.id, directory: "/worktrees", name: "task" }])
-    expect(Object.keys(calls[0] as object)).not.toContain("branch")
+    await gateway.create({ projectID: PROJECT.id, name: "task" })
+    expect(calls[0]!.input).toEqual({ projectID: PROJECT.id, name: "task" })
   })
 
-  test("rejects cross-project operations before discovering or contacting a server", async () => {
-    const gateway = new WorktreeGateway({ project: PROJECT, serverUrl: "http://127.0.0.1:9" })
+  test("rejects cross-project operations before calling OpenCode", async () => {
+    const { api, calls } = recordingApi()
+    const gateway = new WorktreeGateway({ projectID: () => PROJECT.id, worktree: api })
     const projectID = "prj_other"
     await expect(gateway.list({ projectID })).rejects.toThrow("unknown project")
-    await expect(gateway.create({ projectID, directory: "/worktrees" })).rejects.toThrow("unknown project")
+    await expect(gateway.create({ projectID, name: "task" })).rejects.toThrow("unknown project")
     await expect(gateway.remove({ projectID, directory: "/worktrees/task", force: false })).rejects.toThrow("unknown project")
     await expect(gateway.refresh({ projectID })).rejects.toThrow("unknown project")
+    expect(calls).toEqual([])
   })
 
-  test("explicit server sends projectID on every HTTP route and preserves the starting ref and force flag", async () => {
-    const project = { id: PROJECT.id, directory: "E:\\Projects\\repo with spaces" }
-    const directory = "E:\\Worktrees\\task"
-    const requests: { method: string; path: string; query: Record<string, string>; body?: unknown }[] = []
-    const server = Bun.serve({
-      port: 0,
-      async fetch(request) {
-        const url = new URL(request.url)
-        requests.push({
-          method: request.method,
-          path: url.pathname,
-          query: Object.fromEntries(url.searchParams),
-          body: request.body ? await request.json() : undefined,
-        })
-        if (url.pathname === "/api/worktree") {
-          if (request.method === "GET") return Response.json([{ directory: project.directory }])
-          if (request.method === "POST") return Response.json({ directory })
-          if (request.method === "DELETE") return Response.json(nativeWorktreeError("worktree is dirty", true), { status: 400 })
-        }
-        if (url.pathname === "/api/worktree/refresh" && request.method === "POST") return new Response(null, { status: 204 })
-        return new Response(null, { status: 404 })
+  test("refuses to call OpenCode without a project id instead of sending a request without one", async () => {
+    const { api, calls } = recordingApi()
+    const gateway = new WorktreeGateway({ projectID: () => "", worktree: api })
+    await expect(gateway.list({ projectID: "" })).rejects.toBeInstanceOf(WorktreeFailure)
+    expect(calls).toEqual([])
+  })
+
+  test("reads the project id at call time", async () => {
+    let current = ""
+    const { api } = recordingApi()
+    const gateway = new WorktreeGateway({ projectID: () => current, worktree: api })
+    current = PROJECT.id
+    expect(await gateway.list({ projectID: PROJECT.id })).toEqual([{ directory: "/repo", strategy: undefined }])
+  })
+
+  test("an unresolved project triggers one refresh and one retry", async () => {
+    let attempts = 0
+    const { api, calls } = recordingApi({
+      async create() {
+        attempts += 1
+        if (attempts === 1) throw new Error('Missing key\n  at ["projectID"]')
+        return { directory: "/worktrees/task" }
       },
     })
-    const unexpectedNativeCall = async (): Promise<never> => { throw new Error("explicit server must take precedence") }
-    const gateway = new WorktreeGateway({
-      project,
-      serverUrl: `http://localhost:${server.port}`,
-      worktree: { list: unexpectedNativeCall, create: unexpectedNativeCall, remove: unexpectedNativeCall, refresh: unexpectedNativeCall },
-    })
+    const gateway = new WorktreeGateway({ projectID: () => PROJECT.id, worktree: api })
 
-    try {
-      expect(await gateway.list({ projectID: project.id })).toEqual([{ directory: project.directory }])
-      expect(await gateway.create({ projectID: project.id, directory: "E:\\Worktrees", name: "task", baseRef: "origin/pr-209" })).toEqual({ directory })
-      await expect(gateway.remove({ projectID: project.id, directory, force: false })).rejects.toMatchObject({
-        message: "worktree is dirty", forceRequired: true, nativeName: "WorktreeError",
-      })
-      await gateway.refresh({ projectID: project.id })
-
-      expect(requests).toEqual([
-        { method: "GET", path: "/api/worktree", query: { projectID: project.id }, body: undefined },
-        { method: "POST", path: "/api/worktree", query: {}, body: { projectID: project.id, directory: "E:\\Worktrees", name: "task", branch: "origin/pr-209" } },
-        { method: "DELETE", path: "/api/worktree", query: {}, body: { projectID: project.id, directory, force: false } },
-        { method: "POST", path: "/api/worktree/refresh", query: {}, body: { projectID: project.id } },
-      ])
-    } finally {
-      await server.stop(true)
-    }
+    expect(await gateway.create({ projectID: PROJECT.id, name: "task" })).toEqual({ directory: "/worktrees/task" })
+    expect(attempts).toBe(2)
+    expect(calls).toEqual([{ operation: "refresh", input: { projectID: PROJECT.id } }])
   })
 
-  test("explicit serverUrl is honored and transport failures are normalized deterministically", async () => {
-    // Port 9 (discard) with nothing listening: deterministic transport failure.
-    const gateway = new WorktreeGateway({ project: PROJECT, serverUrl: "http://127.0.0.1:9" })
-    const error = await gateway.list({ projectID: PROJECT.id }).then(
-      () => null,
-      (e) => e,
-    )
-    expect(error).toBeInstanceOf(WorktreeFailure)
-    expect((error as WorktreeFailure).message).toContain("OpenCode")
+  test("other failures are not retried", async () => {
+    let attempts = 0
+    const { api, calls } = recordingApi({
+      async remove() {
+        attempts += 1
+        throw nativeWorktreeError("worktree is dirty", true)
+      },
+    })
+    const gateway = new WorktreeGateway({ projectID: () => PROJECT.id, worktree: api })
+
+    await expect(gateway.remove({ projectID: PROJECT.id, directory: "/worktrees/task", force: false })).rejects.toMatchObject({
+      message: "worktree is dirty",
+      forceRequired: true,
+    })
+    expect(attempts).toBe(1)
+    expect(calls).toEqual([])
   })
 })

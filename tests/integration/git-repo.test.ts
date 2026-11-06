@@ -1,16 +1,5 @@
-/**
- * Integration test: real Git repository + a stand-in OpenCode native server
- * implementing the exact verified wire contract of the V2 worktree routes
- * (backed by real `git worktree` operations, as OpenCode's `git_worktree`
- * strategy does), exercised through the REAL generated OpenCode client via
- * the plugin's gateway.
- *
- * This validates: request serialization of the generated client, status-code
- * handling (200/204/400), native WorktreeError decoding (forceRequired),
- * gateway normalization, plugin path/name handling, and safe removal —
- * end to end, with real Git semantics. Git is used here ONLY inside the fake
- * server (playing the role of OpenCode itself), never by the plugin.
- */
+// Real git repository behind a stand-in for OpenCode's `ctx.worktree` domain.
+// Git runs only inside the stand-in (playing OpenCode), never in the plugin.
 
 import { describe, expect, test } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs"
@@ -25,7 +14,8 @@ import { buildRemoveTool } from "../../src/tools/remove.ts"
 import { KeyedMutex } from "../../src/utils/mutex.ts"
 import { resolveOptions } from "../../src/options.ts"
 import { exists as fsExists } from "../../src/utils/fs.ts"
-import { output, PROJECT, toolContext } from "../helpers/fakes.ts"
+import { nativeWorktreeError, output, PROJECT, toolContext } from "../helpers/fakes.ts"
+import type { NativeWorktreeApi } from "../../src/opencode/types.ts"
 
 const gitAvailable = await Bun.$`git --version`.nothrow().then(() => true, () => false)
 
@@ -70,110 +60,69 @@ function makeGitVcs() {
   }
 }
 
-/** Stand-in for OpenCode's native worktree routes, backed by real git.
- * The server picks the strategy from project configuration, so requests carry none. */
-function makeNativeServer(repo: string) {
-  const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } })
-  const error = (message: string, forceRequired?: boolean) =>
-    json({ _tag: "WorktreeError", name: "WorktreeError", data: { message, forceRequired } }, 400)
-  const createBodies: Record<string, unknown>[] = []
+/** Stand-in for the native worktree domain, backed by real git like OpenCode's git strategy. */
+function makeNativeApi(repo: string, defaultParent: string) {
+  const createInputs: Record<string, unknown>[] = []
+  const fail = (message: string, forceRequired?: boolean) => nativeWorktreeError(message, forceRequired)
 
   async function managedEntries(): Promise<{ directory: string; strategy?: string }[]> {
     const porcelain = await git(repo, "worktree", "list", "--porcelain")
     const entries: { directory: string; strategy?: string }[] = []
-    let first = true
     for (const block of porcelain.split("\n\n")) {
       const line = block.split("\n").find((l) => l.startsWith("worktree "))
       if (!line) continue
       const directory = resolve(line.slice("worktree ".length).trim())
-      entries.push(first ? { directory } : { directory, strategy: "git" })
-      first = false
+      entries.push(entries.length === 0 ? { directory } : { directory, strategy: "git" })
     }
     return entries
   }
 
-  const server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const url = new URL(request.url)
-      const route = url.pathname
-
-      if (request.method === "GET" && route === "/api/worktree") {
-        if (url.searchParams.get("projectID") !== PROJECT.id) return error("wrong project")
-        return json(await managedEntries())
-      }
-
-      const body = request.body ? ((await request.json()) as Record<string, unknown>) : {}
-      if (body.projectID !== PROJECT.id) return error("wrong project")
-
-      if (request.method === "POST" && route === "/api/worktree") {
-        createBodies.push(body)
-        const { directory, name, branch } = body as { directory?: string; name?: string; branch?: string }
-        if (!directory || !name) return error("directory and name are required")
-        // Verified beta semantics: parent dir + leaf name, detached at an
-        // existing ref (`branch`) or HEAD.
-        const target = resolve(join(directory, name))
-        const ref = branch ?? "HEAD"
-        try {
-          await git(repo, "worktree", "add", "--detach", "--", target, ref)
-          return json({ directory: target })
-        } catch (e) {
-          return error(e instanceof Error ? e.message : String(e))
-        }
-      }
-
-      if (request.method === "DELETE" && route === "/api/worktree") {
-        const { directory, force } = body as { directory?: string; force?: boolean }
-        if (!directory) return error("directory is required")
-        const dirty = (await git(directory, "status", "--porcelain").catch(() => "M fake")).trim() !== ""
-        if (dirty && !force) {
-          return error("worktree contains modified or untracked files", true)
-        }
-        try {
-          await git(repo, "worktree", "remove", directory, ...(force ? ["--force"] : []))
-          return new Response(null, { status: 204 })
-        } catch (e) {
-          return error(e instanceof Error ? e.message : String(e))
-        }
-      }
-
-      if (request.method === "POST" && route === "/api/worktree/refresh") return new Response(null, { status: 204 })
-
-      return json({ message: `no route: ${request.method} ${url.pathname}` }, 404)
+  const api: NativeWorktreeApi = {
+    async list(input) {
+      if (input.projectID !== PROJECT.id) throw fail("wrong project")
+      return managedEntries()
     },
-  })
-  return { server, createBodies }
+    async create(input) {
+      if (input.projectID !== PROJECT.id) throw fail("wrong project")
+      createInputs.push({ ...input })
+      const target = resolve(join(input.directory ?? defaultParent, input.name ?? "worktree"))
+      try {
+        await git(repo, "worktree", "add", "--detach", "--", target, input.branch ?? "HEAD")
+      } catch (e) {
+        throw fail(e instanceof Error ? e.message : String(e))
+      }
+      return { directory: target }
+    },
+    async remove(input) {
+      if (input.projectID !== PROJECT.id) throw fail("wrong project")
+      const dirty = (await git(input.directory, "status", "--porcelain").catch(() => "M fake")).trim() !== ""
+      if (dirty && !input.force) throw fail("worktree contains modified or untracked files", true)
+      await git(repo, "worktree", "remove", input.directory, ...(input.force ? ["--force"] : []))
+    },
+    async refresh() {},
+  }
+  return { api, createInputs }
 }
 
 describe.skipIf(!gitAvailable)("integration: temp git repository through the native worktree bridge", () => {
-  const base = mkdtempSync(join(tmpdir(), "opencode2-worktrees-it-"))
+  const base = mkdtempSync(join(tmpdir(), "opencode-better-worktrees-it-"))
   const repo = join(base, "repo")
   const worktreeRoot = join(base, "worktrees")
 
+  const defaultParent = join(base, "opencode-default")
+  const { api, createInputs } = makeNativeApi(repo, defaultParent)
   const deps: ToolDeps = {
     project: { id: PROJECT.id, directory: repo, canonical: repo },
-    // Replaced with the HTTP-backed gateway right after the server starts below.
-    worktrees: new WorktreeGateway({ project: { id: PROJECT.id }, serverUrl: "http://127.0.0.1:1" }),
+    worktrees: new WorktreeGateway({ projectID: () => PROJECT.id, worktree: api }),
     sessions: {
       get: async () => ({ id: "ses_main", projectID: PROJECT.id, directory: repo }),
-      createAtLocation: async () => ({ id: "ses_spawned", projectID: PROJECT.id, directory: repo }),
       move: async () => {},
-      prompt: async () => ({}),
-      wait: async () => {},
     },
     vcs: makeGitVcs(),
     fs: { exists: fsExists },
-    agents: { get: async (agentID) => ({ id: agentID }) },
     options: resolveOptions({ directoryRoot: worktreeRoot }),
     locks: new KeyedMutex(),
   }
-
-  const { server, createBodies } = makeNativeServer(repo)
-  // Real generated OpenCode client talking over HTTP to the stand-in server.
-  ;(deps as { worktrees: unknown }).worktrees = new WorktreeGateway({
-    project: { id: PROJECT.id },
-    serverUrl: `http://localhost:${server.port}`,
-  })
 
   test("create → list → status → refuse dirty removal → forced removal, against real git", async () => {
     // Arrange a real repository with an initial commit.
@@ -190,7 +139,7 @@ describe.skipIf(!gitAvailable)("integration: temp git repository through the nat
     expect(created.branch).toBe("agent/it-auth") // suggested work branch
     expect(existsSync(created.directory)).toBe(true)
     expect(existsSync(join(created.directory, "README.md"))).toBe(true) // setup/checkout ran
-    expect(createBodies).toEqual([{ projectID: PROJECT.id, directory: resolve(worktreeRoot), name: "it-auth" }])
+    expect(createInputs).toEqual([{ projectID: PROJECT.id, name: "it-auth", directory: resolve(worktreeRoot) }])
 
     // The agent (never the plugin) creates the work branch before committing.
     await git(created.directory, "switch", "-c", "agent/it-auth")
@@ -225,8 +174,18 @@ describe.skipIf(!gitAvailable)("integration: temp git repository through the nat
     expect(finalList.worktrees).toHaveLength(1)
   })
 
+  test("without directoryRoot the worktree lands where OpenCode puts it", async () => {
+    const created = await output<{ directory: string }>(
+      buildCreateTool({ ...deps, options: resolveOptions({}) }),
+      { name: "it-default" },
+    )
+    expect(created.directory).toBe(resolve(defaultParent, "it-default"))
+    expect(existsSync(join(created.directory, "README.md"))).toBe(true)
+    const removed = await output<{ removed: boolean }>(buildRemoveTool(deps), { worktree: "it-default" })
+    expect(removed.removed).toBe(true)
+  })
+
   test("cleanup", () => {
-    server.stop(true)
     rmSync(base, { recursive: true, force: true })
   })
 })

@@ -5,6 +5,7 @@ import {
   basenameOf,
   isInside,
   isValidWorktreeName,
+  pathKey,
   resolveInsideRoot,
   samePath,
 } from "../src/utils/paths.ts"
@@ -53,6 +54,11 @@ describe("path containment and comparison", () => {
     expect(samePath(resolve("/repo/auth"), resolve("/repo", "auth"))).toBe(true)
     expect(samePath(resolve("/repo/auth") + sep, resolve("/repo/auth"))).toBe(true)
     expect(samePath(resolve("/repo/auth"), resolve("/repo/other"))).toBe(false)
+  })
+
+  test("pathKey ignores case only where the default file system does", () => {
+    const insensitive = process.platform === "win32" || process.platform === "darwin"
+    expect(pathKey(resolve("/repo/Auth")) === pathKey(resolve("/repo/auth"))).toBe(insensitive)
   })
 
   test("basenameOf works with both separators", () => {

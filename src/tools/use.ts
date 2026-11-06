@@ -1,15 +1,4 @@
-/**
- * `worktree_use` — move the CURRENT OpenCode session into a managed worktree.
- *
- * Uses the native `v2.session.move` API so the session's actual location
- * becomes the worktree directory; subsequent file edits, shell commands, and
- * agent work happen inside the worktree through OpenCode's normal tools.
- *
- * Semantics: `session.move` changes the session's location pointer. It does
- * NOT transfer or overwrite files. Any uncommitted changes in the previous
- * directory stay there, so the result reports them explicitly instead of
- * silently losing track of them.
- */
+// `session.move` only moves the session's location pointer; uncommitted changes stay and are reported.
 
 import type { ToolDeps, ToolExecutionContext, WorktreeTool } from "./shared.ts"
 import { defineTool, resolveWorktree, summarizeChanges, withJson } from "./shared.ts"
